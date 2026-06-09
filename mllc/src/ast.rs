@@ -190,6 +190,11 @@ pub enum Expr {
     },
     /// Do-notation block
     Do(Vec<DoStmt>),
+    /// Record construction with named fields: Person { perName = "Alice", perAge = 30 }
+    RecordCon {
+        constructor: String,
+        fields: Vec<(String, Expr)>,
+    },
     /// Parenthesized expression
     Paren(Box<Expr>),
     /// Operator as function: `(+)`

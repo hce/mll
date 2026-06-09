@@ -37,7 +37,7 @@ MATA-LL TODO
 ## Language features
 
 - [ ] GADTs (parser recognizes syntax, type checker discards type info)
-- [ ] Record construction with named fields: Person { perName = "Morpheus" }
+- [x] Record construction with named fields: Person { perName = "Morpheus" }
 - [ ] Qualified import name prefixing (import qualified Data.Tree as T)
 - [ ] Orphan instance detection
 - [ ] Polymorphic recursion detection (clear error message)

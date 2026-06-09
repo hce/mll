@@ -1710,6 +1710,52 @@ impl Checker {
                     Err(TypeErrorKind::UnboundVariable(format!("({})", op)))
                 }
             }
+            Expr::RecordCon { constructor, fields } => {
+                // Desugar to positional application by reordering fields
+                // to match the data declaration order
+                let con_info = self.constructors.get(constructor)
+                    .ok_or_else(|| TypeErrorKind::UnboundConstructor(constructor.clone()))?.clone();
+
+                // Collect field names with their index from the record_fields table
+                let mut field_order: Vec<(String, usize)> = Vec::new();
+                for (field_name, (type_name, idx)) in &self.record_fields {
+                    if *type_name == con_info.type_name {
+                        field_order.push((field_name.clone(), *idx));
+                    }
+                }
+                // Sort by index to get declaration order
+                field_order.sort_by_key(|(_, idx)| *idx);
+
+                // Build positional arguments in declaration order
+                let num_fields = field_order.len();
+                let mut ordered_args: Vec<Option<&Expr>> = vec![None; num_fields];
+                for (name, val) in fields {
+                    let pos = field_order.iter().position(|(n, _)| n == name);
+                    match pos {
+                        Some(i) => ordered_args[i] = Some(val),
+                        None => return Err(TypeErrorKind::Other(format!(
+                            "Unknown field '{}' for constructor '{}'", name, constructor
+                        ))),
+                    }
+                }
+
+                // Check all fields are provided
+                for (i, arg) in ordered_args.iter().enumerate() {
+                    if arg.is_none() {
+                        return Err(TypeErrorKind::Other(format!(
+                            "Missing field '{}' in constructor '{}'",
+                            field_order[i].0, constructor
+                        )));
+                    }
+                }
+
+                // Desugar to App(App(Con(name), arg1), arg2) ...
+                let desugared = ordered_args.iter().fold(
+                    Expr::Con(constructor.clone()),
+                    |acc, arg| Expr::App(Box::new(acc), Box::new(arg.unwrap().clone())),
+                );
+                self.infer_expr(&desugared, env)
+            }
         }
     }
 

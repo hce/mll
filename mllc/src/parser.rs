@@ -1095,7 +1095,35 @@ impl Parser {
                 match name.as_str() {
                     "True" => Ok(Expr::Lit(Literal::Bool(true))),
                     "False" => Ok(Expr::Lit(Literal::Bool(false))),
-                    _ => Ok(Expr::Con(name)),
+                    _ => {
+                        // Check for record construction: Con { field = val, ... }
+                        if self.at(&Token::LeftBrace) {
+                            self.advance();
+                            let mut fields = Vec::new();
+                            loop {
+                                self.skip_newlines_and_indent();
+                                if self.at(&Token::RightBrace) {
+                                    self.advance();
+                                    break;
+                                }
+                                let field_name = self.expect_ident()?;
+                                self.expect(&Token::Eq)?;
+                                let value = self.parse_expr()?;
+                                fields.push((field_name, value));
+                                self.skip_newlines_and_indent();
+                                if self.at(&Token::Comma) {
+                                    self.advance();
+                                } else {
+                                    self.skip_newlines_and_indent();
+                                    self.expect(&Token::RightBrace)?;
+                                    break;
+                                }
+                            }
+                            Ok(Expr::RecordCon { constructor: name, fields })
+                        } else {
+                            Ok(Expr::Con(name))
+                        }
+                    }
                 }
             }
             Token::LeftParen => {
