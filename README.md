@@ -97,6 +97,11 @@ The design, direction and taste are Hans-Christian's; much of the
 implementation was written by Claude (Anthropic). Neither could have
 built it alone -- at least not in a weekend.
 
+## Contributing
+
+By submitting a pull request, you agree to license your contribution
+under the MIT License, the same license that covers this project.
+
 ## Dependencies
 
 So far, no dependencies (MLL libraries) are supported. I don't think
