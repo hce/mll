@@ -1,6 +1,27 @@
 use std::collections::HashMap;
 use std::fmt;
 
+/// Kind of a type expression.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Kind {
+    /// Regular types: Integer, String, Maybe Integer
+    Type,
+    /// Type-level string literals (used in FFI type families)
+    Symbol,
+    /// Function type constructor: Type -> Type (e.g., Maybe, [])
+    Arrow(Box<Kind>, Box<Kind>),
+}
+
+impl fmt::Display for Kind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Kind::Type => write!(f, "Type"),
+            Kind::Symbol => write!(f, "Symbol"),
+            Kind::Arrow(a, b) => write!(f, "{} -> {}", a, b),
+        }
+    }
+}
+
 /// Internal type representation used by the type checker.
 /// Separate from the AST's Type to allow for unification variables.
 #[derive(Debug, Clone, PartialEq, Eq)]

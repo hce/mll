@@ -89,6 +89,8 @@ pub struct Checker {
     pub record_fields: HashMap<String, (String, usize)>,
     /// User-defined type families: name -> equations
     type_families: HashMap<String, Vec<TypeFamilyEq>>,
+    /// Kind table: type constructor name -> kind
+    kinds: HashMap<String, Kind>,
 }
 
 impl Checker {
@@ -103,8 +105,10 @@ impl Checker {
             instances: HashMap::new(),
             record_fields: HashMap::new(),
             type_families: HashMap::new(),
+            kinds: HashMap::new(),
         };
         checker.init_prelude();
+        checker.init_kinds();
         checker
     }
 
@@ -469,9 +473,92 @@ impl Checker {
         });
     }
 
+    fn init_kinds(&mut self) {
+        // Base types: kind Type
+        for name in &["Integer", "Number", "String", "Bool", "()"] {
+            self.kinds.insert(name.to_string(), Kind::Type);
+        }
+        // Type constructors: kind Type -> Type
+        let type_to_type = Kind::Arrow(Box::new(Kind::Type), Box::new(Kind::Type));
+        for name in &["Maybe", "IO", "[]"] {
+            self.kinds.insert(name.to_string(), type_to_type.clone());
+        }
+        // LuaFunction: kind Type -> Type
+        self.kinds.insert("LuaFunction".to_string(), type_to_type.clone());
+    }
+
+    /// Get the kind of a type constructor, or infer Type for unknowns.
+    pub fn kind_of(&self, name: &str) -> Kind {
+        self.kinds.get(name).cloned().unwrap_or(Kind::Type)
+    }
+
+    /// Infer the kind of an AST type expression and report errors.
+    fn check_type_kind(&mut self, ty: &Type) -> Kind {
+        match ty {
+            Type::Con(name) => self.kind_of(name),
+            Type::Var(_) => Kind::Type, // type variables are assumed to be Type
+            Type::Arrow(a, b) => {
+                let ka = self.check_type_kind(a);
+                let kb = self.check_type_kind(b);
+                if ka != Kind::Type {
+                    self.push_error_ctx(
+                        TypeErrorKind::Other(format!("Kind error: argument of '->' has kind {}, expected Type", ka)),
+                        format!("type expression"),
+                    );
+                }
+                if kb != Kind::Type {
+                    self.push_error_ctx(
+                        TypeErrorKind::Other(format!("Kind error: result of '->' has kind {}, expected Type", kb)),
+                        format!("type expression"),
+                    );
+                }
+                Kind::Type
+            }
+            Type::App(f, a) => {
+                let kf = self.check_type_kind(f);
+                let _ka = self.check_type_kind(a);
+                match kf {
+                    Kind::Arrow(_, result) => *result,
+                    Kind::Type => {
+                        // Applying a Type-kinded thing — this is a kind error
+                        // but only report if it's a known constructor
+                        if let Type::Con(name) = f.as_ref() {
+                            if self.kinds.contains_key(name) {
+                                self.push_error_ctx(
+                                    TypeErrorKind::Other(format!(
+                                        "Kind error: '{}' has kind Type and cannot be applied to an argument",
+                                        name
+                                    )),
+                                    format!("type expression"),
+                                );
+                            }
+                        }
+                        Kind::Type
+                    }
+                    _ => Kind::Type,
+                }
+            }
+            Type::List(_) | Type::IO(_) | Type::Unit => Kind::Type,
+            Type::Paren(inner) => self.check_type_kind(inner),
+            Type::Forall { inner, .. } => self.check_type_kind(inner),
+            Type::Constrained { ty, .. } => self.check_type_kind(ty),
+            _ => Kind::Type,
+        }
+    }
+
+    /// Register a data type's kind based on its type parameters.
+    fn register_kind(&mut self, name: &str, num_params: usize) {
+        let mut kind = Kind::Type;
+        for _ in 0..num_params {
+            kind = Kind::Arrow(Box::new(Kind::Type), Box::new(kind));
+        }
+        self.kinds.insert(name.to_string(), kind);
+    }
+
     // --- Data types ---
 
     fn register_data_type(&mut self, name: &str, type_vars: &[String], constructors: &[Constructor]) {
+        self.register_kind(name, type_vars.len());
         let tvars: Vec<TyVar> = type_vars.iter()
             .map(|n| TyVar { name: n.clone(), id: u32::MAX })
             .collect();
@@ -513,6 +600,7 @@ impl Checker {
     /// `newtype Age = Integer` creates constructor `Age :: Integer -> Age`
     /// that is the identity function at runtime.
     fn register_newtype(&mut self, name: &str, type_vars: &[String], inner: &Type) {
+        self.register_kind(name, type_vars.len());
         let tvars: Vec<TyVar> = type_vars.iter()
             .map(|n| TyVar { name: n.clone(), id: u32::MAX })
             .collect();
@@ -589,6 +677,8 @@ impl Checker {
         let mut ffi_info: HashMap<String, (String, bool)> = HashMap::new(); // name -> (lua_name, is_io)
         for decl in &module.decls {
             if let Decl::TypeSig { name, ty } = decl {
+                // Kind-check the type signature
+                self.check_type_kind(ty);
                 // Extract FFI info before reducing the type
                 if let Some(info) = extract_ffi_info(ty) {
                     ffi_info.insert(name.clone(), info);
