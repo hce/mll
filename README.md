@@ -3,8 +3,8 @@ Modest Attempt at Typesystem Augmenting the Lua Language (mata-ll)
 
 Project goals:
 
-You make a mistake, but the compiler has arrived already and
-stops you before any harm can spread to the runtime.
+If you make a mistake, the compiler is already there to
+stop you before any harm can spread to the runtime.
 
 Make available a useful subset of modern haskell to Lua. It is not
 intended to be a replacement for haskell, but rather as a way to write
