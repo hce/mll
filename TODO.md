@@ -38,7 +38,7 @@ MATA-LL TODO
 
 - [ ] GADTs (parser recognizes syntax, type checker discards type info)
 - [x] Record construction with named fields: Person { perName = "Morpheus" }
-- [ ] Qualified import name prefixing (import qualified Data.Tree as T)
+- [x] Qualified import name prefixing (import qualified Data.Tree as T)
 - [ ] Orphan instance detection
 - [x] Polymorphic recursion detection (specialization depth limit)
 - [ ] Process intrinsic declarations properly

@@ -123,12 +123,10 @@ impl ModuleLoader {
                                 }
                             }
                         }
-                        ImportItems::Qualified(_alias) => {
-                            // TODO: qualified imports need name prefixing
-                            // For now, import everything
+                        ImportItems::Qualified(alias) => {
                             for d in &resolved.decls {
                                 if !matches!(d, Decl::Import { .. }) {
-                                    imported_decls.push(d.clone());
+                                    imported_decls.push(prefix_decl(d, alias));
                                 }
                             }
                         }
@@ -147,6 +145,28 @@ impl ModuleLoader {
 }
 
 /// Get the primary name of a declaration for import filtering
+/// Prefix a declaration's name with a qualified alias: "T.foo"
+fn prefix_decl(decl: &Decl, alias: &str) -> Decl {
+    let prefix = |name: &str| format!("{}.{}", alias, name);
+    match decl {
+        Decl::TypeSig { name, ty } => Decl::TypeSig {
+            name: prefix(name), ty: ty.clone(),
+        },
+        Decl::FunDef { name, clauses } => Decl::FunDef {
+            name: prefix(name), clauses: clauses.clone(),
+        },
+        Decl::DataDef { name, type_vars, constructors, deriving } => Decl::DataDef {
+            name: prefix(name), type_vars: type_vars.clone(),
+            constructors: constructors.clone(), deriving: deriving.clone(),
+        },
+        Decl::NewtypeDef { name, type_vars, inner } => Decl::NewtypeDef {
+            name: prefix(name), type_vars: type_vars.clone(), inner: inner.clone(),
+        },
+        // Don't prefix class/instance names — they're global
+        other => other.clone(),
+    }
+}
+
 fn decl_name(decl: &Decl) -> Option<String> {
     match decl {
         Decl::TypeSig { name, .. } => Some(name.clone()),
