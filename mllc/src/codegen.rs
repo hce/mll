@@ -7,17 +7,42 @@ struct CodeGen {
     constructors: Vec<(String, String, usize, usize, bool)>,
     /// Newtype constructor names (identity at runtime)
     newtypes: Vec<String>,
+    /// Names that have been forward-declared (skip `local` on definition)
+    forward_declared: std::collections::HashSet<String>,
     output: String,
     indent: usize,
 }
 
 impl CodeGen {
     fn new() -> Self {
-        CodeGen { constructors: Vec::new(), newtypes: Vec::new(), output: String::new(), indent: 0 }
+        CodeGen {
+            constructors: Vec::new(), newtypes: Vec::new(),
+            forward_declared: std::collections::HashSet::new(),
+            output: String::new(), indent: 0,
+        }
     }
 
     fn is_newtype(&self, name: &str) -> bool {
         self.newtypes.iter().any(|n| n == name)
+    }
+
+    /// Returns "local function name" or "name = function" depending on
+    /// whether the name was forward-declared.
+    fn fn_decl(&self, lua_name: &str, params: &str) -> String {
+        if self.forward_declared.contains(lua_name) {
+            format!("{} = function({})", lua_name, params)
+        } else {
+            format!("local function {}({})", lua_name, params)
+        }
+    }
+
+    /// Returns "local name = " or "name = " depending on forward declaration.
+    fn var_decl(&self, lua_name: &str) -> String {
+        if self.forward_declared.contains(lua_name) {
+            format!("{} = ", lua_name)
+        } else {
+            format!("local {} = ", lua_name)
+        }
     }
 
     fn emit(&mut self, s: &str) { self.output.push_str(s); }
@@ -78,6 +103,18 @@ impl CodeGen {
                 ));
             }
             self.emit_line("");
+        }
+
+        // Forward-declare all user functions to support mutual recursion
+        let user_fn_names: Vec<String> = module.functions.iter()
+            .filter(|f| !f.specialized)
+            .map(|f| sanitize_name(&f.name))
+            .collect();
+        if user_fn_names.len() > 1 {
+            self.emit_line(&format!("local {}", user_fn_names.join(", ")));
+            for name in &user_fn_names {
+                self.forward_declared.insert(name.clone());
+            }
         }
 
         // Emit functions (main last, so specializations are defined before use)
@@ -162,7 +199,8 @@ impl CodeGen {
             if is_io_action || is_do_block {
                 // Wrap in a function (IO action, needs to be called)
                 self.emit_indent();
-                self.emit(&format!("local function {}()\n", lua_name));
+                self.emit(&self.fn_decl(&lua_name, ""));
+                self.emit("\n");
                 self.indent += 1;
                 self.gen_where_binds(&clauses[0].where_binds);
                 if is_do_block {
@@ -174,8 +212,9 @@ impl CodeGen {
                 self.emit_line("end");
             } else if expr_references_name(&clauses[0].body, &func.name) {
                 // Self-referencing value binding (e.g., infinite list)
-                // Forward-declare, then assign with lazy cons tails
-                self.emit_line(&format!("local {}", lua_name));
+                if !self.forward_declared.contains(&lua_name) {
+                    self.emit_line(&format!("local {}", lua_name));
+                }
                 self.emit_indent();
                 self.emit(&format!("{} = ", lua_name));
                 self.gen_expr_lazy(&clauses[0].body, &func.name);
@@ -183,7 +222,7 @@ impl CodeGen {
             } else {
                 // Simple value binding
                 self.emit_indent();
-                self.emit(&format!("local {} = ", lua_name));
+                self.emit(&self.var_decl(&lua_name));
                 self.gen_expr(&clauses[0].body);
                 self.emit("\n");
             }
@@ -196,7 +235,8 @@ impl CodeGen {
             let params: Vec<String> = (0..clause.patterns.len()).map(|i| format!("_arg{}", i)).collect();
             let params_str = params.join(", ");
             self.emit_indent();
-            self.emit(&format!("local function {}({})\n", lua_name, params_str));
+            self.emit(&self.fn_decl(&lua_name, &params_str));
+            self.emit("\n");
             self.indent += 1;
 
             let all_simple = clause.patterns.iter().all(|p| matches!(p, TPattern::Var(_, _) | TPattern::Wildcard));
@@ -227,7 +267,8 @@ impl CodeGen {
         let params: Vec<String> = (0..num_params).map(|i| format!("_arg{}", i)).collect();
         let params_str = params.join(", ");
         self.emit_indent();
-        self.emit(&format!("local function {}({})\n", lua_name, params_str));
+        self.emit(&self.fn_decl(&lua_name, &params_str));
+        self.emit("\n");
         self.indent += 1;
         self.gen_pattern_match(&params, clauses);
         self.indent -= 1;
