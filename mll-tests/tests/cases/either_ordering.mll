@@ -1,10 +1,6 @@
-fromRight :: b -> Either a b -> b
-fromRight def (Left _) = def
-fromRight _ (Right x) = x
-
-isLeft :: Either a b -> Bool
-isLeft (Left _) = True
-isLeft (Right _) = False
+fromEither :: Either a a -> a
+fromEither (Left x) = x
+fromEither (Right x) = x
 
 compareInt :: Integer -> Integer -> Ordering
 compareInt a b
@@ -14,9 +10,7 @@ compareInt a b
 
 main :: IO ()
 main = do
-    assert (fromRight 0 (Right 42) == 42) "fromRight Right"
-    assert (fromRight 0 (Left "err") == 0) "fromRight Left"
-    assert (isLeft (Left "x")) "isLeft Left"
-    assert (not (isLeft (Right 1))) "isLeft Right"
+    assert (fromEither (Right 42) == 42) "fromEither Right"
+    assert (fromEither (Left 99) == 99) "fromEither Left"
     let c = compareInt 1 2
     assert (not (c == EQ)) "compareInt 1 2 is not EQ"
