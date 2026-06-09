@@ -1,0 +1,247 @@
+/// Typed Intermediate Representation
+///
+/// Like the AST but every expression carries its resolved type.
+/// Produced by the type checker, consumed by the monomorphizer and codegen.
+
+use crate::types::{Ty, Subst};
+
+#[derive(Debug, Clone)]
+pub struct TModule {
+    pub data_defs: Vec<TDataDef>,
+    pub functions: Vec<TFunction>,
+    /// Instance method implementations, keyed as "ClassName_Type_method"
+    pub instance_fns: Vec<TFunction>,
+    pub has_main: bool,
+    /// Functions exported to Lua
+    pub exports: Vec<String>,
+    /// Record field accessors: (field_name, lua_index)
+    pub record_accessors: Vec<(String, usize)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TDataDef {
+    pub name: String,
+    pub type_vars: Vec<String>,
+    pub constructors: Vec<TConstructor>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TConstructor {
+    pub name: String,
+    pub fields: TConFields,
+}
+
+#[derive(Debug, Clone)]
+pub enum TConFields {
+    Positional(Vec<Ty>),
+    Named(Vec<(String, Ty)>),
+}
+
+#[derive(Debug, Clone)]
+pub struct TFunction {
+    pub name: String,
+    pub ty: Ty,
+    pub clauses: Vec<TClause>,
+    /// If true, this is a monomorphized specialization
+    pub specialized: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct TClause {
+    pub patterns: Vec<TPattern>,
+    pub guards: Vec<TGuard>,
+    pub body: TExpr,
+    pub where_binds: Vec<TLocalDef>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TGuard {
+    pub condition: TExpr,
+    pub body: TExpr,
+}
+
+#[derive(Debug, Clone)]
+pub struct TLocalDef {
+    pub name: String,
+    pub patterns: Vec<TPattern>,
+    pub body: TExpr,
+}
+
+/// Every expression carries its resolved type.
+#[derive(Debug, Clone)]
+pub struct TExpr {
+    pub kind: TExprKind,
+    pub ty: Ty,
+}
+
+impl TExpr {
+    pub fn new(kind: TExprKind, ty: Ty) -> Self {
+        TExpr { kind, ty }
+    }
+
+    /// Apply a substitution to all types in this expression tree
+    pub fn apply_subst(self, subst: &Subst) -> Self {
+        let ty = self.ty.apply_subst(subst);
+        let kind = match self.kind {
+            TExprKind::App(f, a) => TExprKind::App(
+                Box::new(f.apply_subst(subst)),
+                Box::new(a.apply_subst(subst)),
+            ),
+            TExprKind::Lambda { params, body } => TExprKind::Lambda {
+                params: params.into_iter().map(|(n, t)| (n, t.apply_subst(subst))).collect(),
+                body: Box::new(body.apply_subst(subst)),
+            },
+            TExprKind::InfixApp { op, lhs, rhs } => TExprKind::InfixApp {
+                op,
+                lhs: Box::new(lhs.apply_subst(subst)),
+                rhs: Box::new(rhs.apply_subst(subst)),
+            },
+            TExprKind::Negate(e) => TExprKind::Negate(Box::new(e.apply_subst(subst))),
+            TExprKind::If { cond, then_branch, else_branch } => TExprKind::If {
+                cond: Box::new(cond.apply_subst(subst)),
+                then_branch: Box::new(then_branch.apply_subst(subst)),
+                else_branch: Box::new(else_branch.apply_subst(subst)),
+            },
+            TExprKind::Case { scrutinee, branches } => TExprKind::Case {
+                scrutinee: Box::new(scrutinee.apply_subst(subst)),
+                branches: branches.into_iter().map(|b| TCaseBranch {
+                    pattern: b.pattern.apply_subst(subst),
+                    guards: b.guards.into_iter().map(|g| TGuard {
+                        condition: g.condition.apply_subst(subst),
+                        body: g.body.apply_subst(subst),
+                    }).collect(),
+                    body: b.body.apply_subst(subst),
+                }).collect(),
+            },
+            TExprKind::Let { binds, body } => TExprKind::Let {
+                binds: binds.into_iter().map(|b| TLocalDef {
+                    name: b.name, patterns: b.patterns.into_iter().map(|p| p.apply_subst(subst)).collect(),
+                    body: b.body.apply_subst(subst),
+                }).collect(),
+                body: Box::new(body.apply_subst(subst)),
+            },
+            TExprKind::Do(stmts) => TExprKind::Do(stmts.into_iter().map(|s| match s {
+                TDoStmt::Bind { name, ty, expr } => TDoStmt::Bind {
+                    name, ty: ty.apply_subst(subst), expr: expr.apply_subst(subst),
+                },
+                TDoStmt::DoLet { name, ty, expr } => TDoStmt::DoLet {
+                    name, ty: ty.apply_subst(subst), expr: expr.apply_subst(subst),
+                },
+                TDoStmt::Expr(e) => TDoStmt::Expr(e.apply_subst(subst)),
+            }).collect()),
+            TExprKind::Paren(e) => TExprKind::Paren(Box::new(e.apply_subst(subst))),
+            TExprKind::SpecCall { original, specialized, args } => TExprKind::SpecCall {
+                original, specialized,
+                args: args.into_iter().map(|a| a.apply_subst(subst)).collect(),
+            },
+            other => other, // Var, Con, Lit, OpFunc — no nested types
+        };
+        TExpr { kind, ty }
+    }
+}
+
+impl TPattern {
+    pub fn apply_subst(self, subst: &Subst) -> Self {
+        match self {
+            TPattern::Var(n, ty) => TPattern::Var(n, ty.apply_subst(subst)),
+            TPattern::Constructor { name, args } => TPattern::Constructor {
+                name,
+                args: args.into_iter().map(|p| p.apply_subst(subst)).collect(),
+            },
+            TPattern::Paren(p) => TPattern::Paren(Box::new(p.apply_subst(subst))),
+            other => other, // Wildcard, LitPat
+        }
+    }
+}
+
+impl TClause {
+    pub fn apply_subst(self, subst: &Subst) -> Self {
+        TClause {
+            patterns: self.patterns.into_iter().map(|p| p.apply_subst(subst)).collect(),
+            guards: self.guards.into_iter().map(|g| TGuard {
+                condition: g.condition.apply_subst(subst),
+                body: g.body.apply_subst(subst),
+            }).collect(),
+            body: self.body.apply_subst(subst),
+            where_binds: self.where_binds.into_iter().map(|b| TLocalDef {
+                name: b.name, patterns: b.patterns.into_iter().map(|p| p.apply_subst(subst)).collect(),
+                body: b.body.apply_subst(subst),
+            }).collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum TExprKind {
+    Var(String),
+    Con(String),
+    Lit(TLiteral),
+    App(Box<TExpr>, Box<TExpr>),
+    Lambda {
+        params: Vec<(String, Ty)>,
+        body: Box<TExpr>,
+    },
+    InfixApp {
+        op: String,
+        lhs: Box<TExpr>,
+        rhs: Box<TExpr>,
+    },
+    Negate(Box<TExpr>),
+    If {
+        cond: Box<TExpr>,
+        then_branch: Box<TExpr>,
+        else_branch: Box<TExpr>,
+    },
+    Case {
+        scrutinee: Box<TExpr>,
+        branches: Vec<TCaseBranch>,
+    },
+    Let {
+        binds: Vec<TLocalDef>,
+        body: Box<TExpr>,
+    },
+    Do(Vec<TDoStmt>),
+    Paren(Box<TExpr>),
+    OpFunc(String),
+    /// A call to a specific monomorphized specialization.
+    /// Original name + mangled specialized name.
+    SpecCall {
+        original: String,
+        specialized: String,
+        args: Vec<TExpr>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct TCaseBranch {
+    pub pattern: TPattern,
+    pub guards: Vec<TGuard>,
+    pub body: TExpr,
+}
+
+#[derive(Debug, Clone)]
+pub enum TDoStmt {
+    Bind { name: String, ty: Ty, expr: TExpr },
+    Expr(TExpr),
+    DoLet { name: String, ty: Ty, expr: TExpr },
+}
+
+#[derive(Debug, Clone)]
+pub enum TPattern {
+    Var(String, Ty),
+    Wildcard,
+    Constructor {
+        name: String,
+        args: Vec<TPattern>,
+    },
+    LitPat(TLiteral),
+    Paren(Box<TPattern>),
+}
+
+#[derive(Debug, Clone)]
+pub enum TLiteral {
+    Integer(i64),
+    Number(f64),
+    Str(String),
+    Bool(bool),
+}

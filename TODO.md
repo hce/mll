@@ -1,0 +1,24 @@
+MATA-LL TODO
+============
+
+## Specified but not implemented
+
+- [ ] User-defined type families (parser skips them)
+- [ ] Kind checking (Type, Symbol, Fn — specified but not enforced)
+- [ ] Superclass constraints on instance declarations
+- [ ] Record field accessors (person.name)
+- [ ] newtype codegen (zero-cost wrapping)
+- [ ] Exhaustiveness checking for pattern matches
+
+## Practically useful
+
+- [ ] Better error messages (line numbers on type errors)
+- [ ] where clauses in functions (parsed, codegen incomplete)
+- [ ] Operator sections: (+1), (1+)
+- [ ] deriving (auto-generate Show, Eq instances)
+- [ ] Lua bytecode output (the spec's ultimate goal)
+
+## Architectural
+
+- [ ] Apply final substitution to TIR (unresolved type vars limit monomorphization)
+- [ ] Prelude as .mll (now possible with lists and FFI)

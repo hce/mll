@@ -1,0 +1,89 @@
+#![allow(dead_code, unused_variables, unused_mut, unused_imports)]
+
+pub mod ast;
+pub mod codegen;
+pub mod lexer;
+pub mod modules;
+pub mod mono;
+pub mod parser;
+pub mod tir;
+pub mod typechecker;
+pub mod types;
+
+use std::path::Path;
+
+/// Result of compilation
+pub struct CompileResult {
+    pub lua_code: String,
+    pub has_main: bool,
+    pub exports: Vec<String>,
+}
+
+/// Compile error
+#[derive(Debug)]
+pub enum CompileError {
+    Lex(String),
+    Parse(String),
+    Import(String),
+    Type(Vec<String>),
+}
+
+impl std::fmt::Display for CompileError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CompileError::Lex(e) => write!(f, "Lexer error: {}", e),
+            CompileError::Parse(e) => write!(f, "Parse error: {}", e),
+            CompileError::Import(e) => write!(f, "Import error: {}", e),
+            CompileError::Type(errors) => {
+                for e in errors {
+                    writeln!(f, "Type error: {}", e)?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+/// Compile mll source code to Lua.
+///
+/// `source`: the .mll source code
+/// `source_dir`: directory of the source file (for import resolution)
+/// `lib_paths`: additional search paths for library modules
+pub fn compile(source: &str, source_dir: &Path, lib_paths: &[&Path]) -> Result<CompileResult, CompileError> {
+    // Lex
+    let tokens = lexer::lex(source).map_err(CompileError::Lex)?;
+
+    // Parse
+    let parsed = parser::parse(&tokens).map_err(CompileError::Parse)?;
+
+    // Resolve imports
+    let mut loader = modules::ModuleLoader::new(source_dir);
+    for path in lib_paths {
+        loader.add_search_path(path.to_path_buf());
+    }
+    let module = loader.resolve_imports(&parsed).map_err(CompileError::Import)?;
+
+    // Type check
+    let mut checker = typechecker::Checker::new();
+    let tir_module = checker.check_module(&module);
+
+    if !checker.errors.is_empty() {
+        let errors: Vec<String> = checker.errors.iter()
+            .map(|e| format!("{}", e))
+            .collect();
+        return Err(CompileError::Type(errors));
+    }
+
+    // Monomorphize
+    let mut mono_pass = mono::Monomorphizer::new(&checker);
+    let mono_module = mono_pass.run(tir_module);
+
+    // Generate Lua
+    let lua_code = codegen::generate(&mono_module);
+
+    Ok(CompileResult {
+        lua_code,
+        has_main: mono_module.has_main,
+        exports: mono_module.exports,
+    })
+}
