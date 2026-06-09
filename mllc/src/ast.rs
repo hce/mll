@@ -41,6 +41,7 @@ pub enum Decl {
         name: String,
         type_vars: Vec<String>,
         constructors: Vec<Constructor>,
+        deriving: Vec<String>,
     },
     /// Newtype: `newtype A = Integer`
     NewtypeDef {

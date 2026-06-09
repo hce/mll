@@ -33,6 +33,7 @@ pub enum Token {
     Intrinsic,
     Export,
     KwType,
+    Deriving,
     Family,
 
     // Symbols
@@ -309,6 +310,7 @@ pub fn lex(source: &str) -> Result<Vec<Located>, String> {
                 "intrinsic" => Token::Intrinsic,
                 "export" => Token::Export,
                 "type" => Token::KwType,
+                "deriving" => Token::Deriving,
                 "family" => Token::Family,
                 "True" => Token::UpperIdent("True".to_string()),
                 "False" => Token::UpperIdent("False".to_string()),

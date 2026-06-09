@@ -412,7 +412,7 @@ impl Checker {
     pub fn check_module(&mut self, module: &Module) -> TModule {
         // Pass 1: register data types
         for decl in &module.decls {
-            if let Decl::DataDef { name, type_vars, constructors } = decl {
+            if let Decl::DataDef { name, type_vars, constructors, .. } = decl {
                 self.register_data_type(name, type_vars, constructors);
             }
         }
@@ -475,8 +475,12 @@ impl Checker {
         let mut exports = Vec::new();
         for decl in &module.decls {
             match decl {
-                Decl::DataDef { name, type_vars, constructors } => {
+                Decl::DataDef { name, type_vars, constructors, deriving } => {
                     data_defs.push(self.convert_data_def(name, type_vars, constructors));
+                    for class in deriving {
+                        let derived = self.derive_instance(class, name, type_vars, constructors);
+                        instance_fns.extend(derived);
+                    }
                 }
                 Decl::FunDef { name, clauses } => {
                     if name == "main" { has_main = true; }
@@ -616,6 +620,274 @@ impl Checker {
     /// Expose instances for the monomorphizer
     pub fn get_instances(&self) -> &HashMap<(String, String), InstanceInfo> {
         &self.instances
+    }
+
+    // --- Deriving ---
+
+    fn derive_instance(
+        &mut self,
+        class: &str,
+        type_name: &str,
+        type_vars: &[String],
+        constructors: &[Constructor],
+    ) -> Vec<TFunction> {
+        match class {
+            "Show" => self.derive_show(type_name, type_vars, constructors),
+            "Eq" => self.derive_eq(type_name, type_vars, constructors),
+            other => {
+                self.push_error_ctx(
+                    TypeErrorKind::Other(format!("Cannot derive '{}' — only Show and Eq are supported", other)),
+                    format!("data {}", type_name),
+                );
+                vec![]
+            }
+        }
+    }
+
+    /// Generate `show` for a data type.
+    /// For each constructor, generates a clause that produces "Constructor field1 field2 ...".
+    fn derive_show(
+        &mut self,
+        type_name: &str,
+        type_vars: &[String],
+        constructors: &[Constructor],
+    ) -> Vec<TFunction> {
+        let tvars: Vec<TyVar> = type_vars.iter()
+            .map(|n| TyVar { name: n.clone(), id: u32::MAX })
+            .collect();
+        let result_type = tvars.iter().fold(
+            Ty::Con(type_name.to_string()),
+            |acc, tv| Ty::app(acc, Ty::Var(tv.clone())),
+        );
+
+        let mangled = format!("show_{}", type_name);
+        let fn_ty = Ty::arrow(result_type.clone(), Ty::Con("String".into()));
+
+        let mut clauses = Vec::new();
+        for con in constructors {
+            let field_count = match &con.fields {
+                ConstructorFields::Positional(fs) => fs.len(),
+                ConstructorFields::Named(fs) => fs.len(),
+            };
+
+            // Build patterns: Con p0 p1 p2 ...
+            let param_names: Vec<String> = (0..field_count)
+                .map(|i| format!("_s{}", i))
+                .collect();
+
+            let con_info = self.constructors.get(&con.name).cloned();
+            let field_tys: Vec<Ty> = con_info.as_ref()
+                .map(|ci| ci.field_types.clone())
+                .unwrap_or_default();
+
+            let patterns = vec![
+                TPattern::Constructor {
+                    name: con.name.clone(),
+                    args: param_names.iter().enumerate().map(|(i, n)| {
+                        let ty = field_tys.get(i).cloned().unwrap_or(Ty::Unit);
+                        TPattern::Var(n.clone(), ty)
+                    }).collect(),
+                }
+            ];
+
+            // Build body: "ConName" ++ " " ++ show p0 ++ " " ++ show p1 ...
+            let mut body = TExpr::new(
+                TExprKind::Lit(TLiteral::Str(con.name.clone())),
+                Ty::Con("String".into()),
+            );
+
+            for (i, pname) in param_names.iter().enumerate() {
+                let field_ty = field_tys.get(i).cloned().unwrap_or(Ty::Unit);
+
+                // " "
+                let space = TExpr::new(
+                    TExprKind::Lit(TLiteral::Str(" ".into())),
+                    Ty::Con("String".into()),
+                );
+                // concat body ++ " "
+                body = TExpr::new(
+                    TExprKind::InfixApp {
+                        op: "++".into(),
+                        lhs: Box::new(body),
+                        rhs: Box::new(space),
+                    },
+                    Ty::Con("String".into()),
+                );
+
+                // show field_i
+                let field_shown = TExpr::new(
+                    TExprKind::App(
+                        Box::new(TExpr::new(
+                            TExprKind::Var("show".into()),
+                            Ty::arrow(field_ty.clone(), Ty::Con("String".into())),
+                        )),
+                        Box::new(TExpr::new(
+                            TExprKind::Var(pname.clone()),
+                            field_ty,
+                        )),
+                    ),
+                    Ty::Con("String".into()),
+                );
+
+                body = TExpr::new(
+                    TExprKind::InfixApp {
+                        op: "++".into(),
+                        lhs: Box::new(body),
+                        rhs: Box::new(field_shown),
+                    },
+                    Ty::Con("String".into()),
+                );
+            }
+
+            clauses.push(TClause {
+                patterns,
+                guards: vec![],
+                body,
+                where_binds: vec![],
+            });
+        }
+
+        // Register the instance
+        let mut method_fns = HashMap::new();
+        method_fns.insert("show".to_string(), mangled.clone());
+        self.instances.insert(
+            ("Show".to_string(), type_name.to_string()),
+            InstanceInfo {
+                class_name: "Show".to_string(),
+                target_type: result_type.clone(),
+                method_fns,
+            },
+        );
+
+        vec![TFunction {
+            name: mangled,
+            ty: fn_ty,
+            clauses,
+            specialized: false,
+        }]
+    }
+
+    /// Generate `==` for a data type.
+    /// Two values are equal if they have the same constructor and all fields are equal.
+    fn derive_eq(
+        &mut self,
+        type_name: &str,
+        type_vars: &[String],
+        constructors: &[Constructor],
+    ) -> Vec<TFunction> {
+        let tvars: Vec<TyVar> = type_vars.iter()
+            .map(|n| TyVar { name: n.clone(), id: u32::MAX })
+            .collect();
+        let result_type = tvars.iter().fold(
+            Ty::Con(type_name.to_string()),
+            |acc, tv| Ty::app(acc, Ty::Var(tv.clone())),
+        );
+
+        let mangled = format!("eq_{}", type_name);
+        let fn_ty = Ty::fun(&[result_type.clone(), result_type.clone()], Ty::Con("Bool".into()));
+
+        let mut clauses = Vec::new();
+
+        for con in constructors {
+            let field_count = match &con.fields {
+                ConstructorFields::Positional(fs) => fs.len(),
+                ConstructorFields::Named(fs) => fs.len(),
+            };
+
+            let con_info = self.constructors.get(&con.name).cloned();
+            let field_tys: Vec<Ty> = con_info.as_ref()
+                .map(|ci| ci.field_types.clone())
+                .unwrap_or_default();
+
+            let a_names: Vec<String> = (0..field_count).map(|i| format!("_a{}", i)).collect();
+            let b_names: Vec<String> = (0..field_count).map(|i| format!("_b{}", i)).collect();
+
+            let pat_a = TPattern::Constructor {
+                name: con.name.clone(),
+                args: a_names.iter().enumerate().map(|(i, n)| {
+                    let ty = field_tys.get(i).cloned().unwrap_or(Ty::Unit);
+                    TPattern::Var(n.clone(), ty)
+                }).collect(),
+            };
+            let pat_b = TPattern::Constructor {
+                name: con.name.clone(),
+                args: b_names.iter().enumerate().map(|(i, n)| {
+                    let ty = field_tys.get(i).cloned().unwrap_or(Ty::Unit);
+                    TPattern::Var(n.clone(), ty)
+                }).collect(),
+            };
+
+            // Build body: a0 == b0 && a1 == b1 && ...
+            let mut body = TExpr::new(
+                TExprKind::Lit(TLiteral::Bool(true)),
+                Ty::Con("Bool".into()),
+            );
+
+            for i in (0..field_count).rev() {
+                let field_ty = field_tys.get(i).cloned().unwrap_or(Ty::Unit);
+                let eq_expr = TExpr::new(
+                    TExprKind::InfixApp {
+                        op: "==".into(),
+                        lhs: Box::new(TExpr::new(
+                            TExprKind::Var(a_names[i].clone()),
+                            field_ty.clone(),
+                        )),
+                        rhs: Box::new(TExpr::new(
+                            TExprKind::Var(b_names[i].clone()),
+                            field_ty,
+                        )),
+                    },
+                    Ty::Con("Bool".into()),
+                );
+                body = TExpr::new(
+                    TExprKind::InfixApp {
+                        op: "&&".into(),
+                        lhs: Box::new(eq_expr),
+                        rhs: Box::new(body),
+                    },
+                    Ty::Con("Bool".into()),
+                );
+            }
+
+            clauses.push(TClause {
+                patterns: vec![pat_a, pat_b],
+                guards: vec![],
+                body,
+                where_binds: vec![],
+            });
+        }
+
+        // Add catch-all clause for different constructors: _ _ = False
+        if constructors.len() > 1 {
+            clauses.push(TClause {
+                patterns: vec![
+                    TPattern::Wildcard,
+                    TPattern::Wildcard,
+                ],
+                guards: vec![],
+                body: TExpr::new(TExprKind::Lit(TLiteral::Bool(false)), Ty::Con("Bool".into())),
+                where_binds: vec![],
+            });
+        }
+
+        // Register the instance
+        let mut method_fns = HashMap::new();
+        method_fns.insert("==".to_string(), mangled.clone());
+        self.instances.insert(
+            ("Eq".to_string(), type_name.to_string()),
+            InstanceInfo {
+                class_name: "Eq".to_string(),
+                target_type: result_type.clone(),
+                method_fns,
+            },
+        );
+
+        vec![TFunction {
+            name: mangled,
+            ty: fn_ty,
+            clauses,
+            specialized: false,
+        }]
     }
 
     // --- Exhaustiveness checking ---

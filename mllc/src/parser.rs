@@ -169,10 +169,12 @@ impl Parser {
                 }
             }
 
+            let deriving = self.parse_deriving()?;
             return Ok(Decl::DataDef {
                 name,
                 type_vars,
                 constructors,
+                deriving,
             });
         }
 
@@ -185,10 +187,13 @@ impl Parser {
             constructors.push(self.parse_constructor()?);
         }
 
+        let deriving = self.parse_deriving()?;
+
         Ok(Decl::DataDef {
             name,
             type_vars,
             constructors,
+            deriving,
         })
     }
 
@@ -233,6 +238,45 @@ impl Parser {
             name,
             fields: ConstructorFields::Positional(fields),
         })
+    }
+
+    /// Parse optional `deriving (Show, Eq)` clause after a data declaration.
+    fn parse_deriving(&mut self) -> Result<Vec<String>, String> {
+        // Look ahead past newlines/indents for 'deriving'
+        let save = self.pos;
+        let save_indent = self.current_indent;
+        self.skip_newlines_and_indent();
+        if !self.at(&Token::Deriving) {
+            self.pos = save;
+            self.current_indent = save_indent;
+            return Ok(vec![]);
+        }
+        self.advance(); // consume 'deriving'
+
+        let mut classes = Vec::new();
+        if self.at(&Token::LeftParen) {
+            self.advance();
+            loop {
+                self.skip_newlines_and_indent();
+                if self.at(&Token::RightParen) {
+                    self.advance();
+                    break;
+                }
+                classes.push(self.expect_upper_ident()?);
+                self.skip_newlines_and_indent();
+                if self.at(&Token::Comma) {
+                    self.advance();
+                } else {
+                    self.expect(&Token::RightParen)?;
+                    break;
+                }
+            }
+        } else {
+            // deriving Show (single class, no parens)
+            classes.push(self.expect_upper_ident()?);
+        }
+
+        Ok(classes)
     }
 
     fn parse_newtype_decl(&mut self) -> Result<Decl, String> {
