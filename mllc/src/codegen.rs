@@ -548,8 +548,8 @@ impl CodeGen {
                         return;
                     }
                     "." => {
-                        self.emit("function(_x) return "); self.gen_expr(lhs);
-                        self.emit("("); self.gen_expr(rhs); self.emit("(_x)) end");
+                        self.emit("(function(_x) return "); self.gen_expr(lhs);
+                        self.emit("("); self.gen_expr(rhs); self.emit("(_x)) end)");
                         return;
                     }
                     other => other,
