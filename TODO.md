@@ -42,7 +42,7 @@ MATA-LL TODO
 - [ ] Orphan instance detection
 - [x] Polymorphic recursion detection (specialization depth limit)
 - [ ] Process intrinsic declarations properly
-- [ ] Expression type ascription (expr :: Type)
+- [x] Expression type ascription (expr :: Type)
 - [ ] when (needs lazy IO or thunked actions)
 
 ## Can defer (spec says so)

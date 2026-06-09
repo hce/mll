@@ -909,12 +909,11 @@ impl Parser {
         self.expr_min_indent = self.current_indent;
         let expr = self.parse_expr_infix(0)?;
 
-        // Type ascription: expr :: Type (parsed and discarded,
-        // the type checker uses its own inference)
+        // Type ascription: expr :: Type
         if self.at(&Token::DblColon) {
             self.advance();
-            let _ty = self.parse_type()?;
-            // TODO: use this type annotation for bidirectional checking
+            let ty = self.parse_type()?;
+            return Ok(Expr::Ascription(Box::new(expr), ty));
         }
 
         Ok(expr)

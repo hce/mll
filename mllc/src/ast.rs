@@ -190,6 +190,8 @@ pub enum Expr {
     },
     /// Do-notation block
     Do(Vec<DoStmt>),
+    /// Type ascription: expr :: Type
+    Ascription(Box<Expr>, Type),
     /// Record construction with named fields: Person { perName = "Alice", perAge = 30 }
     RecordCon {
         constructor: String,

@@ -1710,6 +1710,14 @@ impl Checker {
                     Err(TypeErrorKind::UnboundVariable(format!("({})", op)))
                 }
             }
+            Expr::Ascription(inner, declared_ty) => {
+                let expected = self.ast_type_to_ty(declared_ty);
+                let expected = self.freshen_sig_type(&expected);
+                let (te, inferred, subst) = self.infer_expr(inner, env)?;
+                let s = unify(&inferred, &expected)?;
+                let final_ty = inferred.apply_subst(&s);
+                Ok((te, final_ty, subst.compose(&s)))
+            }
             Expr::RecordCon { constructor, fields } => {
                 // Desugar to positional application by reordering fields
                 // to match the data declaration order
