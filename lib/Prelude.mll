@@ -14,6 +14,8 @@ assert True _ = putStrLn "."
 assert False msg = error msg
 
 -- Common data types
+data Any = AnyString String | AnyInteger Integer | AnyNumber Number | AnyBool Bool | AnyNull
+
 data Either a b = Left a | Right b
 
 data Ordering = LT | EQ | GT

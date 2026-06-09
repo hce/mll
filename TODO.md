@@ -30,7 +30,7 @@ MATA-LL TODO
 ## Missing types and values
 
 - [ ] HashMap k v (intrinsic dictionary type)
-- [ ] Any type (Lua interop: String | Integer | Number | Bool | Null | ...)
+- [x] Any type (Lua interop: String | Integer | Number | Bool | Null | ...)
 - [x] getArgs :: IO [String]
 - [x] exit :: IO ExitValue (data ExitValue = Normal | Err Integer)
 
