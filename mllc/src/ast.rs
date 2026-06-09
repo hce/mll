@@ -67,6 +67,11 @@ pub enum Decl {
         name: String,
         ty: Type,
     },
+    /// Type family: `type family Element container where Element [a] = a`
+    TypeFamily {
+        name: String,
+        equations: Vec<TypeFamilyEq>,
+    },
     /// Import: `import Data.Tree (depth, Tree(..))`
     Import {
         module_path: Vec<String>,
@@ -252,6 +257,15 @@ pub enum Type {
         constraints: Vec<Constraint>,
         ty: Box<Type>,
     },
+}
+
+/// A type family equation: `Element [a] = a`
+#[derive(Debug, Clone)]
+pub struct TypeFamilyEq {
+    /// The argument patterns (e.g., [a], (HashMap k v))
+    pub args: Vec<Type>,
+    /// The result type
+    pub result: Type,
 }
 
 #[derive(Debug, Clone)]

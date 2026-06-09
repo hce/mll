@@ -3,7 +3,7 @@ MATA-LL TODO
 
 ## Specified but not implemented
 
-- [ ] User-defined type families (parser skips them)
+- [x] User-defined type families (parser skips them)
 - [ ] Kind checking (Type, Symbol, Fn — specified but not enforced)
 - [x] Superclass constraints on instance declarations
 - [x] Record field accessors (person.name)

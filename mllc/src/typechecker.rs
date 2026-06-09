@@ -87,6 +87,8 @@ pub struct Checker {
     instances: HashMap<(String, String), InstanceInfo>,
     /// Record field accessors: field_name -> (type_name, lua_index)
     pub record_fields: HashMap<String, (String, usize)>,
+    /// User-defined type families: name -> equations
+    type_families: HashMap<String, Vec<TypeFamilyEq>>,
 }
 
 impl Checker {
@@ -100,6 +102,7 @@ impl Checker {
             classes: HashMap::new(),
             instances: HashMap::new(),
             record_fields: HashMap::new(),
+            type_families: HashMap::new(),
         };
         checker.init_prelude();
         checker
@@ -140,7 +143,13 @@ impl Checker {
             Type::Con(name) => Ty::Con(name.clone()),
             Type::Var(name) => Ty::Var(TyVar { name: name.clone(), id: u32::MAX }),
             Type::Arrow(a, b) => Ty::arrow(self.ast_type_to_ty(a), self.ast_type_to_ty(b)),
-            Type::App(f, a) => Ty::app(self.ast_type_to_ty(f), self.ast_type_to_ty(a)),
+            Type::App(f, a) => {
+                // Check for type family reduction: FamilyName arg1 arg2 ...
+                if let Some(result) = self.try_reduce_type_family(ast_ty) {
+                    return result;
+                }
+                Ty::app(self.ast_type_to_ty(f), self.ast_type_to_ty(a))
+            }
             Type::List(a) => Ty::list(self.ast_type_to_ty(a)),
             Type::IO(a) => Ty::io(self.ast_type_to_ty(a)),
             Type::ScopedLuaIO { scope_var, inner } => {
@@ -158,6 +167,115 @@ impl Checker {
             Type::LuaPure { result, .. } => self.ast_type_to_ty(result),
             // LuaIO "name" T  reduces to  IO T
             Type::LuaIO { result, .. } => Ty::io(self.ast_type_to_ty(result)),
+        }
+    }
+
+    /// Try to reduce a type family application.
+    /// Collects the head and arguments from nested App nodes,
+    /// then tries to match against type family equations.
+    fn try_reduce_type_family(&mut self, ty: &Type) -> Option<Ty> {
+        // Collect the head and args from nested App: F a b -> (F, [a, b])
+        let mut args = Vec::new();
+        let mut head = ty;
+        loop {
+            match head {
+                Type::App(f, a) => {
+                    args.push(a.as_ref());
+                    head = f.as_ref();
+                }
+                _ => break,
+            }
+        }
+        args.reverse();
+
+        let family_name = match head {
+            Type::Con(name) => name.clone(),
+            _ => return None,
+        };
+
+        let equations = self.type_families.get(&family_name)?.clone();
+
+        // Try each equation
+        for eq in &equations {
+            if eq.args.len() != args.len() {
+                continue;
+            }
+            // Try to match each arg pattern against the actual arg
+            let mut bindings: HashMap<String, &Type> = HashMap::new();
+            let mut matched = true;
+            for (pattern, actual) in eq.args.iter().zip(args.iter()) {
+                if !self.match_type_pattern(pattern, actual, &mut bindings) {
+                    matched = false;
+                    break;
+                }
+            }
+            if matched {
+                // Apply bindings to the result type
+                let result = self.substitute_type(&eq.result, &bindings);
+                return Some(self.ast_type_to_ty(&result));
+            }
+        }
+
+        None
+    }
+
+    /// Match a type pattern against an actual type, collecting variable bindings.
+    fn match_type_pattern<'a>(&self, pattern: &Type, actual: &'a Type, bindings: &mut HashMap<String, &'a Type>) -> bool {
+        match pattern {
+            Type::Var(name) => {
+                if let Some(existing) = bindings.get(name) {
+                    // Variable already bound — check consistency
+                    format!("{:?}", existing) == format!("{:?}", actual)
+                } else {
+                    bindings.insert(name.clone(), actual);
+                    true
+                }
+            }
+            Type::Con(name) => matches!(actual, Type::Con(n) if n == name),
+            Type::List(inner_pat) => {
+                if let Type::List(inner_act) = actual {
+                    self.match_type_pattern(inner_pat, inner_act, bindings)
+                } else {
+                    false
+                }
+            }
+            Type::App(f_pat, a_pat) => {
+                if let Type::App(f_act, a_act) = actual {
+                    self.match_type_pattern(f_pat, f_act, bindings)
+                        && self.match_type_pattern(a_pat, a_act, bindings)
+                } else {
+                    false
+                }
+            }
+            Type::Paren(inner) => self.match_type_pattern(inner, actual, bindings),
+            // Wildcards or underscore vars
+            _ => false,
+        }
+    }
+
+    /// Substitute type variables in a type with bound values.
+    fn substitute_type(&self, ty: &Type, bindings: &HashMap<String, &Type>) -> Type {
+        match ty {
+            Type::Var(name) => {
+                if let Some(bound) = bindings.get(name) {
+                    (*bound).clone()
+                } else {
+                    ty.clone()
+                }
+            }
+            Type::Con(_) => ty.clone(),
+            Type::App(f, a) => Type::App(
+                Box::new(self.substitute_type(f, bindings)),
+                Box::new(self.substitute_type(a, bindings)),
+            ),
+            Type::Arrow(a, b) => Type::Arrow(
+                Box::new(self.substitute_type(a, bindings)),
+                Box::new(self.substitute_type(b, bindings)),
+            ),
+            Type::List(a) => Type::List(Box::new(self.substitute_type(a, bindings))),
+            Type::IO(a) => Type::IO(Box::new(self.substitute_type(a, bindings))),
+            Type::Paren(inner) => self.substitute_type(inner, bindings),
+            _ => ty.clone(),
         }
     }
 
@@ -453,10 +571,16 @@ impl Checker {
             }
         }
 
-        // Pass 2: register typeclass declarations
+        // Pass 2: register typeclass declarations and type families
         for decl in &module.decls {
-            if let Decl::ClassDecl { name, type_var, superclasses, methods } = decl {
-                self.register_class(name, type_var, superclasses, methods);
+            match decl {
+                Decl::ClassDecl { name, type_var, superclasses, methods } => {
+                    self.register_class(name, type_var, superclasses, methods);
+                }
+                Decl::TypeFamily { name, equations } => {
+                    self.type_families.insert(name.clone(), equations.clone());
+                }
+                _ => {}
             }
         }
 

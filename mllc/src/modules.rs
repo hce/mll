@@ -156,6 +156,7 @@ fn decl_name(decl: &Decl) -> Option<String> {
         Decl::ClassDecl { name, .. } => Some(name.clone()),
         Decl::InstanceDecl { class_name, .. } => Some(class_name.clone()),
         Decl::ExportSig { name, .. } => Some(name.clone()),
+        Decl::TypeFamily { name, .. } => Some(name.clone()),
         Decl::Import { .. } => None,
     }
 }

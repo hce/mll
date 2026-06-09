@@ -121,6 +121,7 @@ impl Parser {
             Token::Import => self.parse_import_decl().map(|d| vec![d]),
             Token::Class => self.parse_class_decl(),
             Token::Instance => self.parse_instance_decl(),
+            Token::KwType => self.parse_type_family_decl(),
             Token::Intrinsic => self.parse_intrinsic_decl(),
             Token::Export => self.parse_export_decl(),
             Token::Ident(_) => self.parse_value_decl(),
@@ -521,6 +522,51 @@ impl Parser {
             Decl::ExportSig { name: name.clone(), ty: ty.clone() },
             Decl::TypeSig { name, ty },
         ])
+    }
+
+    /// Parse: type family Name args where
+    ///            Name Pattern = Result
+    ///            ...
+    fn parse_type_family_decl(&mut self) -> Result<Vec<Decl>, String> {
+        self.expect(&Token::KwType)?;
+        self.expect(&Token::Family)?;
+        let name = self.expect_upper_ident()?;
+
+        // Skip type parameter names (they're just documentation here)
+        while matches!(self.peek(), Token::Ident(_)) {
+            self.advance();
+        }
+
+        self.expect(&Token::Where)?;
+        self.skip_newlines_and_indent();
+
+        let mut equations = Vec::new();
+        let eq_indent = self.current_indent;
+
+        loop {
+            self.skip_newlines_and_indent();
+            if self.at_eof() || self.current_indent < eq_indent {
+                break;
+            }
+            // Each equation: FamilyName argType... = resultType
+            if let Token::UpperIdent(ref eq_name) = self.peek().clone() {
+                if *eq_name != name {
+                    break;
+                }
+                self.advance(); // consume family name
+                let mut args = Vec::new();
+                while !self.at(&Token::Eq) && !self.at_eof() {
+                    args.push(self.parse_type_atom()?);
+                }
+                self.expect(&Token::Eq)?;
+                let result = self.parse_type()?;
+                equations.push(TypeFamilyEq { args, result });
+            } else {
+                break;
+            }
+        }
+
+        Ok(vec![Decl::TypeFamily { name, equations }])
     }
 
     fn parse_intrinsic_decl(&mut self) -> Result<Vec<Decl>, String> {
