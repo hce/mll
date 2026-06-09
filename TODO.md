@@ -6,16 +6,16 @@ MATA-LL TODO
 - [ ] User-defined type families (parser skips them)
 - [ ] Kind checking (Type, Symbol, Fn — specified but not enforced)
 - [ ] Superclass constraints on instance declarations
-- [ ] Record field accessors (person.name)
+- [x] Record field accessors (person.name)
 - [ ] newtype codegen (zero-cost wrapping)
-- [ ] Exhaustiveness checking for pattern matches
+- [x] Exhaustiveness checking for pattern matches
 
 ## Practically useful
 
-- [ ] Better error messages (line numbers on type errors)
+- [x] Better error messages (line numbers on type errors)
 - [ ] where clauses in functions (parsed, codegen incomplete)
 - [ ] Operator sections: (+1), (1+)
-- [ ] deriving (auto-generate Show, Eq instances)
+- [x] deriving (auto-generate Show, Eq instances)
 - [ ] Lua bytecode output (the spec's ultimate goal)
 
 ## Architectural
