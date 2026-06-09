@@ -7,7 +7,7 @@ MATA-LL TODO
 - [ ] Kind checking (Type, Symbol, Fn — specified but not enforced)
 - [ ] Superclass constraints on instance declarations
 - [x] Record field accessors (person.name)
-- [ ] newtype codegen (zero-cost wrapping)
+- [x] newtype codegen (zero-cost wrapping)
 - [x] Exhaustiveness checking for pattern matches
 
 ## Practically useful

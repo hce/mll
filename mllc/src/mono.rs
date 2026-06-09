@@ -119,6 +119,7 @@ impl Monomorphizer {
             has_main: module.has_main,
             exports: module.exports,
             record_accessors: module.record_accessors,
+            newtypes: module.newtypes,
         }
     }
 

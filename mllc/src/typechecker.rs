@@ -389,6 +389,34 @@ impl Checker {
         }
     }
 
+    /// Register a newtype as a zero-cost wrapper.
+    /// `newtype Age = Integer` creates constructor `Age :: Integer -> Age`
+    /// that is the identity function at runtime.
+    fn register_newtype(&mut self, name: &str, type_vars: &[String], inner: &Type) {
+        let tvars: Vec<TyVar> = type_vars.iter()
+            .map(|n| TyVar { name: n.clone(), id: u32::MAX })
+            .collect();
+        let result_type = tvars.iter().fold(
+            Ty::Con(name.to_string()),
+            |acc, tv| Ty::app(acc, Ty::Var(tv.clone())),
+        );
+        let inner_ty = self.ast_type_to_ty(inner);
+
+        // Register constructor: Name :: InnerType -> Name
+        self.constructors.insert(name.to_string(), ConInfo {
+            type_name: name.to_string(),
+            variant_index: 1,
+            total_variants: 1,
+            field_types: vec![inner_ty.clone()],
+            type_vars: tvars.clone(),
+            result_type: result_type.clone(),
+        });
+        self.env.insert(name.to_string(), Scheme {
+            vars: tvars,
+            ty: Ty::arrow(inner_ty, result_type),
+        });
+    }
+
     fn convert_data_def(&mut self, name: &str, type_vars: &[String], constructors: &[Constructor]) -> TDataDef {
         TDataDef {
             name: name.to_string(),
@@ -410,10 +438,16 @@ impl Checker {
     // --- Module checking (produces TIR) ---
 
     pub fn check_module(&mut self, module: &Module) -> TModule {
-        // Pass 1: register data types
+        // Pass 1: register data types and newtypes
         for decl in &module.decls {
-            if let Decl::DataDef { name, type_vars, constructors, .. } = decl {
-                self.register_data_type(name, type_vars, constructors);
+            match decl {
+                Decl::DataDef { name, type_vars, constructors, .. } => {
+                    self.register_data_type(name, type_vars, constructors);
+                }
+                Decl::NewtypeDef { name, type_vars, inner } => {
+                    self.register_newtype(name, type_vars, inner);
+                }
+                _ => {}
             }
         }
 
@@ -506,7 +540,11 @@ impl Checker {
             .map(|(name, (_, idx))| (name.clone(), *idx))
             .collect();
 
-        TModule { data_defs, functions, instance_fns, has_main, exports, record_accessors }
+        let newtypes: Vec<String> = module.decls.iter().filter_map(|d| {
+            if let Decl::NewtypeDef { name, .. } = d { Some(name.clone()) } else { None }
+        }).collect();
+
+        TModule { data_defs, functions, instance_fns, has_main, exports, record_accessors, newtypes }
     }
 
     // --- Typeclass handling ---

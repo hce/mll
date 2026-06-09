@@ -16,6 +16,8 @@ pub struct TModule {
     pub exports: Vec<String>,
     /// Record field accessors: (field_name, lua_index)
     pub record_accessors: Vec<(String, usize)>,
+    /// Newtype names (zero-cost wrappers, constructor = identity)
+    pub newtypes: Vec<String>,
 }
 
 #[derive(Debug, Clone)]

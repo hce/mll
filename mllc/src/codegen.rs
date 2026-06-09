@@ -5,13 +5,19 @@ use crate::types::Ty;
 struct CodeGen {
     /// (con_name, type_name, variant_index, total, is_enum)
     constructors: Vec<(String, String, usize, usize, bool)>,
+    /// Newtype constructor names (identity at runtime)
+    newtypes: Vec<String>,
     output: String,
     indent: usize,
 }
 
 impl CodeGen {
     fn new() -> Self {
-        CodeGen { constructors: Vec::new(), output: String::new(), indent: 0 }
+        CodeGen { constructors: Vec::new(), newtypes: Vec::new(), output: String::new(), indent: 0 }
+    }
+
+    fn is_newtype(&self, name: &str) -> bool {
+        self.newtypes.iter().any(|n| n == name)
     }
 
     fn emit(&mut self, s: &str) { self.output.push_str(s); }
@@ -39,10 +45,19 @@ impl CodeGen {
         for def in &module.data_defs {
             self.register_data_type(def);
         }
+        self.newtypes = module.newtypes.clone();
 
         // Emit constructors
         for def in &module.data_defs {
             self.gen_data_constructors(def);
+        }
+
+        // Emit newtype constructors (identity functions)
+        for name in &module.newtypes {
+            self.emit_line(&format!("local function {}(_v) return _v end", name));
+        }
+        if !module.newtypes.is_empty() {
+            self.emit_line("");
         }
 
         // Emit instance method functions
@@ -302,6 +317,7 @@ impl CodeGen {
                     self.emit_indent(); self.emit(&format!("{} ", gkw));
                     let mut sub = CodeGen::new();
                     sub.constructors = self.constructors.clone();
+                    sub.newtypes = self.newtypes.clone();
                     sub.gen_expr(&guard.condition);
                     let guard_str = sub.output;
                     if conditions.is_empty() {
@@ -371,7 +387,12 @@ impl CodeGen {
                 conditions.push(format!("{} == {}", scrutinee, s));
             }
             TPattern::Constructor { name, args } => {
-                if let Some((tag, total, is_enum)) = self.constructor_info(name) {
+                if self.is_newtype(name) {
+                    // Newtype: zero-cost wrapper, value is the inner type directly
+                    for arg in args {
+                        self.collect_pattern_conditions(scrutinee, arg, conditions, bindings);
+                    }
+                } else if let Some((tag, total, is_enum)) = self.constructor_info(name) {
                     if is_enum {
                         conditions.push(format!("{} == {}", scrutinee, tag));
                     } else if total > 1 {
