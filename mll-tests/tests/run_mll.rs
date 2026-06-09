@@ -52,6 +52,24 @@ mll_test!(either_ordering, "either_ordering.mll");
 
 // Compile-error tests: these SHOULD fail to compile
 #[test]
+fn eq_without_instance_rejected() {
+    let source = r#"
+data Foo = Foo
+    deriving Show
+
+main :: IO ()
+main = putStrLn (show (Foo == Foo))
+"#;
+    match mllc::compile(source, Path::new("."), &[]) {
+        Err(e) => {
+            let msg = format!("{}", e);
+            assert!(msg.contains("No instance"), "Expected 'No instance' error, got: {}", msg);
+        }
+        Ok(_) => panic!("Expected compilation to fail for == without Eq instance"),
+    }
+}
+
+#[test]
 fn show_without_instance_rejected() {
     let source = r#"
 data Secret = Secret Integer

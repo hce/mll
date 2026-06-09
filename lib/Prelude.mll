@@ -14,6 +14,7 @@ assert False msg = error msg
 data Either a b = Left a | Right b
 
 data Ordering = LT | EQ | GT
+    deriving Eq
 
 -- Identity and combinators
 id :: a -> a

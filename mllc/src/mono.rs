@@ -261,6 +261,32 @@ impl Monomorphizer {
                 )
             }
             TExprKind::InfixApp { op, lhs, rhs } => {
+                // Check for typeclass method resolution on infix operators
+                if self.class_methods.contains(&op) && !self.is_polymorphic(&lhs.ty) {
+                    let ty_str = format!("{}", lhs.ty);
+                    let key = (op.clone(), ty_str.clone());
+                    if let Some(mangled) = self.instance_methods.get(&key).cloned() {
+                        let mono_lhs = self.mono_expr(*lhs);
+                        let mono_rhs = self.mono_expr(*rhs);
+                        return TExpr {
+                            kind: TExprKind::App(
+                                Box::new(TExpr::new(
+                                    TExprKind::App(
+                                        Box::new(TExpr::new(TExprKind::Var(mangled), Ty::Unit)),
+                                        Box::new(mono_lhs),
+                                    ),
+                                    Ty::Unit,
+                                )),
+                                Box::new(mono_rhs),
+                            ),
+                            ty,
+                        };
+                    } else if !self.has_parameterized_instance(&op, &lhs.ty) {
+                        self.errors.push(format!(
+                            "No instance for '{}' on type '{}'", op, ty_str
+                        ));
+                    }
+                }
                 TExprKind::InfixApp {
                     op,
                     lhs: Box::new(self.mono_expr(*lhs)),

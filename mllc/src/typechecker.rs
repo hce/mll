@@ -363,7 +363,8 @@ impl Checker {
         for op in &["+", "-", "*", "/"] {
             self.env.insert(op.to_string(), Scheme { vars: vec![a.clone()], ty: Ty::fun(&[ta.clone(), ta.clone()], ta.clone()) });
         }
-        for op in &["==", "/=", "<", ">", "<=", ">="] {
+        // <, >, <=, >= stay generic for now (Ord typeclass TODO)
+        for op in &["<", ">", "<=", ">="] {
             self.env.insert(op.to_string(), Scheme { vars: vec![a.clone()], ty: Ty::fun(&[ta.clone(), ta.clone()], Ty::Con("Bool".into())) });
         }
         for op in &["&&", "||"] {
@@ -446,6 +447,40 @@ impl Checker {
             vars: vec![a.clone()],
             ty: show_ty,
         });
+
+        // Built-in Eq typeclass
+        let eq_ty = Ty::fun(&[ta.clone(), ta.clone()], Ty::Con("Bool".into()));
+        self.classes.insert("Eq".to_string(), ClassInfo {
+            name: "Eq".to_string(),
+            type_var: "a".to_string(),
+            superclasses: vec![],
+            methods: vec![("==".to_string(), eq_ty.clone())],
+        });
+        self.env.insert("==".to_string(), Scheme {
+            vars: vec![a.clone()],
+            ty: eq_ty,
+        });
+        // /= is derived from ==
+        self.env.insert("/=".to_string(), Scheme {
+            vars: vec![a.clone()],
+            ty: Ty::fun(&[ta.clone(), ta.clone()], Ty::Con("Bool".into())),
+        });
+
+        // Eq instances for base types
+        for type_name in &["Integer", "Number", "String", "Bool"] {
+            let target = Ty::Con(type_name.to_string());
+            let mangled = format!("eq_{}", type_name);
+            let mut method_fns = HashMap::new();
+            method_fns.insert("==".to_string(), mangled);
+            self.instances.insert(
+                ("Eq".to_string(), type_name.to_string()),
+                InstanceInfo {
+                    class_name: "Eq".to_string(),
+                    target_type: target,
+                    method_fns,
+                },
+            );
+        }
 
         // Show instances for base types
         for type_name in &["Integer", "Number", "String", "Bool", "[]"] {

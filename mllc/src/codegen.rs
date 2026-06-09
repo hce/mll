@@ -859,4 +859,8 @@ local function show_Integer(x) return show(x) end
 local function show_Number(x) return show(x) end
 local function show_String(x) return show(x) end
 local function show_Bool(x) return show(x) end
+local function eq_Integer(a, b) return a == b end
+local function eq_Number(a, b) return a == b end
+local function eq_String(a, b) return a == b end
+local function eq_Bool(a, b) return a == b end
 "#;
