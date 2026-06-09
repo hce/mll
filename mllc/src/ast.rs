@@ -49,10 +49,11 @@ pub enum Decl {
         type_vars: Vec<String>,
         inner: Type,
     },
-    /// Typeclass declaration: `class Show a where show :: a -> String`
+    /// Typeclass declaration: `class Eq a => Ord a where compare :: a -> a -> Integer`
     ClassDecl {
         name: String,
         type_var: String,
+        superclasses: Vec<String>,
         methods: Vec<ClassMethod>,
     },
     /// Typeclass instance: `instance Show Integer where show x = ...`

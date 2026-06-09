@@ -5,7 +5,7 @@ MATA-LL TODO
 
 - [ ] User-defined type families (parser skips them)
 - [ ] Kind checking (Type, Symbol, Fn — specified but not enforced)
-- [ ] Superclass constraints on instance declarations
+- [x] Superclass constraints on instance declarations
 - [x] Record field accessors (person.name)
 - [x] newtype codegen (zero-cost wrapping)
 - [x] Exhaustiveness checking for pattern matches

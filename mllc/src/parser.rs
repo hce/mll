@@ -367,6 +367,34 @@ impl Parser {
 
     fn parse_class_decl(&mut self) -> Result<Vec<Decl>, String> {
         self.expect(&Token::Class)?;
+
+        // Parse optional superclass constraints: Eq a => or (Eq a, Show a) =>
+        let save = self.pos;
+        let save_indent = self.current_indent;
+        let mut superclasses = Vec::new();
+
+        // Try to parse constraints followed by =>
+        let first = self.expect_upper_ident()?;
+        if let Token::Ident(_) = self.peek() {
+            let _tv = self.expect_ident()?;
+            if self.at(&Token::FatArrow) {
+                // Single constraint: Eq a =>
+                superclasses.push(first);
+                self.advance(); // consume =>
+            } else {
+                // No constraint, backtrack
+                self.pos = save;
+                self.current_indent = save_indent;
+            }
+        } else if self.at(&Token::Comma) {
+            // Multiple constraints would need parens, skip for now
+            self.pos = save;
+            self.current_indent = save_indent;
+        } else {
+            self.pos = save;
+            self.current_indent = save_indent;
+        }
+
         let class_name = self.expect_upper_ident()?;
         let type_var = self.expect_ident()?;
         self.expect(&Token::Where)?;
@@ -403,41 +431,42 @@ impl Parser {
             methods.push(ClassMethod { name, ty });
         }
 
-        Ok(vec![Decl::ClassDecl { name: class_name, type_var, methods }])
+        Ok(vec![Decl::ClassDecl { name: class_name, type_var, superclasses, methods }])
     }
 
     fn parse_instance_decl(&mut self) -> Result<Vec<Decl>, String> {
         self.expect(&Token::Instance)?;
 
-        // Parse optional constraint: Show a =>
-        // For now, skip constraints
+        // Parse optional constraints: Eq a => or (Eq a, Show a) =>
+        // Then: ClassName TargetType where
+        // Strategy: save position, try to find =>, backtrack if not found
         let save = self.pos;
+        let save_indent = self.current_indent;
         let class_name;
         let target_type;
 
-        // Try: ClassName Type where
-        let cn = self.expect_upper_ident()?;
+        // Speculatively try: constraint(s) => class type where
+        let first_name = self.expect_upper_ident()?;
 
-        // Check if next is => (constraint) or a type
+        // Check for constraint: UpperIdent lowerIdent =>
         if let Token::Ident(_) = self.peek() {
-            let _tv = self.expect_ident()?;
+            let save2 = self.pos;
+            self.advance(); // consume the type var
             if self.at(&Token::FatArrow) {
-                // This was a constraint, skip it
-                self.advance();
+                // Constraint found, skip it (constraint already validated by superclass)
+                self.advance(); // consume =>
                 class_name = self.expect_upper_ident()?;
                 target_type = self.parse_type_atom()?;
             } else {
-                // No constraint — cn is class name, _tv... hmm
-                // Actually: `instance Show Integer where`
-                // cn = "Show", peek was "Integer" but we consumed it as ident
-                // This is wrong — Integer starts with uppercase
-                // Let me handle this differently
-                self.pos = save;
-                class_name = self.expect_upper_ident()?;
+                // No =>, backtrack to after first_name
+                self.pos = save2;
+                // first_name is the class, next is the target type
+                class_name = first_name;
                 target_type = self.parse_type_atom()?;
             }
         } else {
-            class_name = cn;
+            // target_type starts with uppercase — first_name is class, next is target
+            class_name = first_name;
             target_type = self.parse_type_atom()?;
         }
 

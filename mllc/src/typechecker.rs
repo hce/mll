@@ -59,6 +59,8 @@ pub struct ConInfo {
 pub struct ClassInfo {
     pub name: String,
     pub type_var: String,
+    /// Superclass names (e.g., Eq for class Eq a => Ord a)
+    pub superclasses: Vec<String>,
     /// Method name -> method type (with type_var as placeholder)
     pub methods: Vec<(String, Ty)>,
 }
@@ -453,8 +455,8 @@ impl Checker {
 
         // Pass 2: register typeclass declarations
         for decl in &module.decls {
-            if let Decl::ClassDecl { name, type_var, methods } = decl {
-                self.register_class(name, type_var, methods);
+            if let Decl::ClassDecl { name, type_var, superclasses, methods } = decl {
+                self.register_class(name, type_var, superclasses, methods);
             }
         }
 
@@ -479,8 +481,19 @@ impl Checker {
             }
         }
 
-        // Pass 4: register and check instance declarations
+        // Pass 4a: process deriving clauses first (so derived instances
+        // are available when checking explicit instances with superclass constraints)
         let mut instance_fns = Vec::new();
+        for decl in &module.decls {
+            if let Decl::DataDef { name, type_vars, constructors, deriving } = decl {
+                for class in deriving {
+                    let derived = self.derive_instance(class, name, type_vars, constructors);
+                    instance_fns.extend(derived);
+                }
+            }
+        }
+
+        // Pass 4b: register and check explicit instance declarations
         for decl in &module.decls {
             if let Decl::InstanceDecl { class_name, target_type, methods } = decl {
                 let ifns = self.check_instance(class_name, target_type, methods);
@@ -509,12 +522,8 @@ impl Checker {
         let mut exports = Vec::new();
         for decl in &module.decls {
             match decl {
-                Decl::DataDef { name, type_vars, constructors, deriving } => {
+                Decl::DataDef { name, type_vars, constructors, .. } => {
                     data_defs.push(self.convert_data_def(name, type_vars, constructors));
-                    for class in deriving {
-                        let derived = self.derive_instance(class, name, type_vars, constructors);
-                        instance_fns.extend(derived);
-                    }
                 }
                 Decl::FunDef { name, clauses } => {
                     if name == "main" { has_main = true; }
@@ -549,7 +558,7 @@ impl Checker {
 
     // --- Typeclass handling ---
 
-    fn register_class(&mut self, name: &str, type_var: &str, methods: &[ClassMethod]) {
+    fn register_class(&mut self, name: &str, type_var: &str, superclasses: &[String], methods: &[ClassMethod]) {
         let tv = TyVar { name: type_var.to_string(), id: u32::MAX };
         let mut method_types = Vec::new();
 
@@ -558,7 +567,6 @@ impl Checker {
             method_types.push((method.name.clone(), ty.clone()));
 
             // Register class method in env as polymorphic
-            // e.g., show :: a -> String (with Show constraint, which we ignore for now)
             self.env.insert(method.name.clone(), Scheme {
                 vars: vec![tv.clone()],
                 ty: ty,
@@ -568,6 +576,7 @@ impl Checker {
         self.classes.insert(name.to_string(), ClassInfo {
             name: name.to_string(),
             type_var: type_var.to_string(),
+            superclasses: superclasses.to_vec(),
             methods: method_types,
         });
     }
@@ -591,6 +600,20 @@ impl Checker {
                 return vec![];
             }
         };
+
+        // Check superclass constraints
+        for superclass in &class_info.superclasses {
+            let key = (superclass.clone(), ty_str.clone());
+            if !self.instances.contains_key(&key) {
+                self.push_error_ctx(
+                    TypeErrorKind::Other(format!(
+                        "No instance of superclass '{}' for type '{}' (required by '{}')",
+                        superclass, ty_str, class_name
+                    )),
+                    format!("instance {} {}", class_name, ty_str),
+                );
+            }
+        }
 
         let mut instance_info = InstanceInfo {
             class_name: class_name.to_string(),
