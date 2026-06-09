@@ -13,7 +13,7 @@ MATA-LL TODO
 ## Practically useful
 
 - [x] Better error messages (line numbers on type errors)
-- [ ] where clauses in functions (parsed, codegen incomplete)
+- [x] where clauses in functions (parsed, codegen incomplete)
 - [ ] Operator sections: (+1), (1+)
 - [x] deriving (auto-generate Show, Eq instances)
 - [ ] Lua bytecode output (the spec's ultimate goal)

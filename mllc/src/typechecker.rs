@@ -1046,6 +1046,22 @@ impl Checker {
 
         let expected_ret = remaining_ty.apply_subst(&subst);
 
+        // Pre-register where-bound names so they're in scope for the body
+        for ld in &clause.where_binds {
+            if ld.patterns.is_empty() {
+                let fresh = self.fresh_var("_wh");
+                local_env.insert(ld.name.clone(), Scheme::mono(fresh));
+            } else {
+                // Local function: assign a fresh type for each parameter + return
+                let mut fn_ty = self.fresh_var("_wr");
+                for _ in &ld.patterns {
+                    let param_ty = self.fresh_var("_wp");
+                    fn_ty = Ty::arrow(param_ty, fn_ty);
+                }
+                local_env.insert(ld.name.clone(), Scheme::mono(fn_ty));
+            }
+        }
+
         let mut tguards = Vec::new();
         let tbody;
 
@@ -1066,14 +1082,45 @@ impl Checker {
             tbody = tb;
         }
 
-        let twhere = clause.where_binds.iter().map(|ld| {
-            let (texpr, _, _) = self.infer_expr(&ld.body, &local_env).unwrap_or_else(|_| {
-                (TExpr::new(TExprKind::Var("error".into()), Ty::Unit), Ty::Unit, Subst::empty())
-            });
-            TLocalDef {
-                name: ld.name.clone(),
-                patterns: vec![],
-                body: texpr,
+        // Type-check where bindings fully
+        let twhere: Vec<TLocalDef> = clause.where_binds.iter().map(|ld| {
+            if ld.patterns.is_empty() {
+                // Simple value binding: where x = expr
+                let (texpr, inferred_ty, s) = self.infer_expr(&ld.body, &local_env).unwrap_or_else(|_| {
+                    (TExpr::new(TExprKind::Var("error".into()), Ty::Unit), Ty::Unit, Subst::empty())
+                });
+                // Unify with the pre-registered fresh type
+                if let Some(scheme) = local_env.lookup(&ld.name) {
+                    let _ = unify(&scheme.ty, &inferred_ty);
+                }
+                TLocalDef {
+                    name: ld.name.clone(),
+                    patterns: vec![],
+                    body: texpr,
+                }
+            } else {
+                // Local function: where go acc [] = ...
+                let mut fn_env = local_env.clone();
+                let mut param_tys = Vec::new();
+                let mut tpatterns = Vec::new();
+                let mut where_subst = Subst::empty();
+                for pat in &ld.patterns {
+                    let param_ty = self.fresh_var("_w");
+                    let (tp, ps) = self.check_pattern(pat, &param_ty, &mut fn_env)
+                        .unwrap_or((TPattern::Wildcard, Subst::empty()));
+                    where_subst = where_subst.compose(&ps);
+                    param_tys.push(param_ty.apply_subst(&where_subst));
+                    tpatterns.push(tp);
+                }
+                let (texpr, body_ty, bs) = self.infer_expr(&ld.body, &fn_env).unwrap_or_else(|_| {
+                    (TExpr::new(TExprKind::Var("error".into()), Ty::Unit), Ty::Unit, Subst::empty())
+                });
+                where_subst = where_subst.compose(&bs);
+                TLocalDef {
+                    name: ld.name.clone(),
+                    patterns: tpatterns.into_iter().map(|p| p.apply_subst(&where_subst)).collect(),
+                    body: texpr.apply_subst(&where_subst),
+                }
             }
         }).collect();
 
