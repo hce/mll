@@ -969,6 +969,7 @@ impl Checker {
         self.env.insert(name.to_string(), self_scheme);
 
         let mut tclauses = Vec::new();
+        let mut overall_subst = Subst::empty();
 
         for (clause_idx, clause) in clauses.iter().enumerate() {
             let clause_ctx = if clauses.len() > 1 {
@@ -978,10 +979,20 @@ impl Checker {
             };
 
             match self.check_clause(clause, &fresh_ty, &clause_ctx) {
-                Ok(tc) => tclauses.push(tc),
+                Ok((tc, clause_subst)) => {
+                    tclauses.push(tc);
+                    overall_subst = overall_subst.compose(&clause_subst);
+                }
                 Err(e) => { self.push_error_span(e, clause_ctx, clause.span); }
             }
         }
+
+        // Apply the combined substitution to the function type and all clauses,
+        // resolving type variables that were unified during clause checking.
+        let final_ty = fresh_ty.apply_subst(&overall_subst);
+        let tclauses: Vec<TClause> = tclauses.into_iter()
+            .map(|c| c.apply_subst(&overall_subst))
+            .collect();
 
         // Check exhaustiveness of first argument patterns
         if !clauses.is_empty() && !clauses[0].patterns.is_empty() {
@@ -1008,13 +1019,13 @@ impl Checker {
 
         Some(TFunction {
             name: name.to_string(),
-            ty: fresh_ty,
+            ty: final_ty,
             clauses: tclauses,
             specialized: false,
         })
     }
 
-    fn check_clause(&mut self, clause: &Clause, fun_ty: &Ty, ctx: &str) -> Result<TClause, TypeErrorKind> {
+    fn check_clause(&mut self, clause: &Clause, fun_ty: &Ty, ctx: &str) -> Result<(TClause, Subst), TypeErrorKind> {
         let mut local_env = self.env.clone();
         let mut remaining_ty = fun_ty.clone();
         let mut subst = Subst::empty();
@@ -1073,7 +1084,7 @@ impl Checker {
             body: tbody,
             where_binds: twhere,
         };
-        Ok(raw_clause.apply_subst(&subst))
+        Ok((raw_clause.apply_subst(&subst), subst))
     }
 
     // --- Pattern checking (returns typed pattern) ---
