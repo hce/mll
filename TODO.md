@@ -49,3 +49,4 @@ MATA-LL TODO
 
 - [ ] Operator fixity declarations (Haskell defaults hardcoded)
 - [ ] Lambda pattern matching
+- [ ] FFI varargs support for Lua functions like string.format
