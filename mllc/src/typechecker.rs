@@ -618,6 +618,74 @@ impl Checker {
         &self.instances
     }
 
+    // --- Exhaustiveness checking ---
+
+    /// Check if a list of patterns exhaustively covers a data type.
+    /// Returns a list of missing constructor names, or empty if exhaustive.
+    fn check_exhaustiveness(&self, patterns: &[&Pattern]) -> Vec<String> {
+        // Collect constructor names, unwrapping parens, checking for catch-alls
+        let mut seen_constructors: Vec<String> = Vec::new();
+        let mut type_name: Option<String> = None;
+        let mut has_literal = false;
+
+        for p in patterns {
+            self.collect_pattern_info(p, &mut seen_constructors, &mut type_name, &mut has_literal);
+        }
+
+        // If any pattern is a catch-all (variable/wildcard found), it's exhaustive
+        if seen_constructors.contains(&"*".to_string()) { return vec![]; }
+
+        // If we have literals, we can't check exhaustiveness
+        if has_literal { return vec![]; }
+
+        // If we have no constructors, nothing to check
+        let type_name = match type_name {
+            Some(t) => t,
+            None => return vec![],
+        };
+
+        // Find all constructors for this type
+        let all_constructors: Vec<String> = self.constructors.iter()
+            .filter(|(_, info)| info.type_name == type_name)
+            .map(|(name, _)| name.clone())
+            .collect();
+
+        // Return missing ones
+        all_constructors.into_iter()
+            .filter(|c| !seen_constructors.contains(c))
+            .collect()
+    }
+
+    /// Recursively collect pattern info, unwrapping Paren wrappers.
+    fn collect_pattern_info(
+        &self,
+        pattern: &Pattern,
+        seen: &mut Vec<String>,
+        type_name: &mut Option<String>,
+        has_literal: &mut bool,
+    ) {
+        match pattern {
+            Pattern::Var(_) | Pattern::Wildcard => {
+                // Use a sentinel to indicate catch-all
+                if !seen.contains(&"*".to_string()) {
+                    seen.push("*".to_string());
+                }
+            }
+            Pattern::Constructor { name, .. } => {
+                if let Some(info) = self.constructors.get(name) {
+                    *type_name = Some(info.type_name.clone());
+                    if !seen.contains(name) {
+                        seen.push(name.clone());
+                    }
+                }
+            }
+            Pattern::LitPat(_) => { *has_literal = true; }
+            Pattern::Paren(inner) => {
+                self.collect_pattern_info(inner, seen, type_name, has_literal);
+            }
+        }
+    }
+
     // --- Function checking ---
 
     fn check_function(&mut self, name: &str, clauses: &[Clause], declared_ty: &Ty) -> Option<TFunction> {
@@ -640,6 +708,23 @@ impl Checker {
             match self.check_clause(clause, &fresh_ty, &clause_ctx) {
                 Ok(tc) => tclauses.push(tc),
                 Err(e) => { self.push_error_span(e, clause_ctx, clause.span); }
+            }
+        }
+
+        // Check exhaustiveness of first argument patterns
+        if !clauses.is_empty() && !clauses[0].patterns.is_empty() {
+            let first_patterns: Vec<&Pattern> = clauses.iter()
+                .map(|c| &c.patterns[0])
+                .collect();
+            let missing = self.check_exhaustiveness(&first_patterns);
+            if !missing.is_empty() {
+                self.push_error_span(
+                    TypeErrorKind::NonExhaustive(format!(
+                        "'{}': missing patterns for {}", name, missing.join(", ")
+                    )),
+                    format!("definition of '{}'", name),
+                    clauses[0].span,
+                );
             }
         }
 
@@ -893,6 +978,22 @@ impl Checker {
                     let s = unify(&result_ty.apply_subst(&subst), &body_ty)?;
                     subst = subst.compose(&s);
                     tbranches.push(TCaseBranch { pattern: tp, guards: vec![], body: tb });
+                }
+
+                // Check exhaustiveness of case patterns
+                let case_patterns: Vec<&Pattern> = branches.iter()
+                    .map(|b| &b.pattern)
+                    .collect();
+                let missing = self.check_exhaustiveness(&case_patterns);
+                if !missing.is_empty() {
+                    let fn_name = self.current_fn.clone().unwrap_or_else(|| "<expr>".into());
+                    self.push_error_ctx(
+                        TypeErrorKind::NonExhaustive(format!(
+                            "case expression in '{}': missing patterns for {}",
+                            fn_name, missing.join(", ")
+                        )),
+                        format!("definition of '{}'", fn_name),
+                    );
                 }
 
                 let final_ty = result_ty.apply_subst(&subst);
