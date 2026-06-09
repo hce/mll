@@ -22,8 +22,8 @@ MATA-LL TODO
 
 ## Typeclasses and dispatch
 
-- [ ] Eq as a proper typeclass gating == and /=
-- [ ] Ord as a proper typeclass gating <, >, <=, >=, compare
+- [x] Eq as a proper typeclass gating == and /=
+- [x] Ord as a proper typeclass gating <, >, <=, >=
 - [ ] Functor / Applicative / Monad hierarchy (spec lines 370-388)
 - [ ] Desugar do-notation through >>= instead of hardwiring
 

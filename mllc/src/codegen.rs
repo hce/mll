@@ -863,4 +863,16 @@ local function eq_Integer(a, b) return a == b end
 local function eq_Number(a, b) return a == b end
 local function eq_String(a, b) return a == b end
 local function eq_Bool(a, b) return a == b end
+local function ord_lt__Integer(a, b) return a < b end
+local function ord_lt__Number(a, b) return a < b end
+local function ord_lt__String(a, b) return a < b end
+local function ord_gt__Integer(a, b) return a > b end
+local function ord_gt__Number(a, b) return a > b end
+local function ord_gt__String(a, b) return a > b end
+local function ord_le__Integer(a, b) return a <= b end
+local function ord_le__Number(a, b) return a <= b end
+local function ord_le__String(a, b) return a <= b end
+local function ord_ge__Integer(a, b) return a >= b end
+local function ord_ge__Number(a, b) return a >= b end
+local function ord_ge__String(a, b) return a >= b end
 "#;

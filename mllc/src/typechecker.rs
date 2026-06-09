@@ -363,10 +363,7 @@ impl Checker {
         for op in &["+", "-", "*", "/"] {
             self.env.insert(op.to_string(), Scheme { vars: vec![a.clone()], ty: Ty::fun(&[ta.clone(), ta.clone()], ta.clone()) });
         }
-        // <, >, <=, >= stay generic for now (Ord typeclass TODO)
-        for op in &["<", ">", "<=", ">="] {
-            self.env.insert(op.to_string(), Scheme { vars: vec![a.clone()], ty: Ty::fun(&[ta.clone(), ta.clone()], Ty::Con("Bool".into())) });
-        }
+        // Comparison operators will be registered as Ord methods below
         for op in &["&&", "||"] {
             self.env.insert(op.to_string(), Scheme { vars: vec![], ty: Ty::fun(&[Ty::Con("Bool".into()), Ty::Con("Bool".into())], Ty::Con("Bool".into())) });
         }
@@ -476,6 +473,43 @@ impl Checker {
                 ("Eq".to_string(), type_name.to_string()),
                 InstanceInfo {
                     class_name: "Eq".to_string(),
+                    target_type: target,
+                    method_fns,
+                },
+            );
+        }
+
+        // Built-in Ord typeclass (superclass: Eq)
+        let cmp_ty = Ty::fun(&[ta.clone(), ta.clone()], Ty::Con("Bool".into()));
+        self.classes.insert("Ord".to_string(), ClassInfo {
+            name: "Ord".to_string(),
+            type_var: "a".to_string(),
+            superclasses: vec!["Eq".to_string()],
+            methods: vec![
+                ("<".to_string(), cmp_ty.clone()),
+                (">".to_string(), cmp_ty.clone()),
+                ("<=".to_string(), cmp_ty.clone()),
+                (">=".to_string(), cmp_ty.clone()),
+            ],
+        });
+        for op in &["<", ">", "<=", ">="] {
+            self.env.insert(op.to_string(), Scheme {
+                vars: vec![a.clone()],
+                ty: cmp_ty.clone(),
+            });
+        }
+
+        // Ord instances for base types
+        for type_name in &["Integer", "Number", "String"] {
+            let target = Ty::Con(type_name.to_string());
+            let mut method_fns = HashMap::new();
+            for op in &["<", ">", "<=", ">="] {
+                method_fns.insert(op.to_string(), format!("ord_{}__{}", op_to_name(op), type_name));
+            }
+            self.instances.insert(
+                ("Ord".to_string(), type_name.to_string()),
+                InstanceInfo {
+                    class_name: "Ord".to_string(),
                     target_type: target,
                     method_fns,
                 },
@@ -1798,6 +1832,19 @@ impl Checker {
 /// Extract FFI info from an AST type.
 /// Walks through Arrow types to find LuaPure/LuaIO at the return position.
 /// Returns (lua_function_name, is_io).
+/// Convert an operator symbol to a name safe for mangling.
+fn op_to_name(op: &str) -> &str {
+    match op {
+        "<" => "lt",
+        ">" => "gt",
+        "<=" => "le",
+        ">=" => "ge",
+        "==" => "eq",
+        "/=" => "ne",
+        _ => op,
+    }
+}
+
 fn extract_ffi_info(ty: &Type) -> Option<(String, bool)> {
     match ty {
         Type::Arrow(_, b) => extract_ffi_info(b),
