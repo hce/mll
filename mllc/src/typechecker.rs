@@ -723,6 +723,13 @@ impl Checker {
             }
         }
 
+        // Pre-register all function signatures so mutually recursive
+        // functions can see each other during type checking
+        for (name, ty) in &sigs {
+            let scheme = self.generalize(&self.env.clone(), ty);
+            self.env.insert(name.clone(), scheme);
+        }
+
         // Pass 6: collect exports and check function definitions
         let mut exports = Vec::new();
         for decl in &module.decls {
