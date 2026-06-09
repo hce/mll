@@ -182,7 +182,11 @@ impl Checker {
     }
 
     fn push_error_ctx(&mut self, kind: TypeErrorKind, ctx: String) {
-        self.errors.push(TypeError { kind, context: Some(ctx) });
+        self.errors.push(TypeError { kind, context: Some(ctx), span: None });
+    }
+
+    fn push_error_span(&mut self, kind: TypeErrorKind, ctx: String, span: Span) {
+        self.errors.push(TypeError { kind, context: Some(ctx), span: Some(span) });
     }
 
     fn literal_type(&self, lit: &Literal) -> Ty {
@@ -635,7 +639,7 @@ impl Checker {
 
             match self.check_clause(clause, &fresh_ty, &clause_ctx) {
                 Ok(tc) => tclauses.push(tc),
-                Err(e) => { self.push_error_ctx(e, clause_ctx); }
+                Err(e) => { self.push_error_span(e, clause_ctx, clause.span); }
             }
         }
 

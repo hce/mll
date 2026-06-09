@@ -289,20 +289,21 @@ pub fn unify(t1: &Ty, t2: &Ty) -> Result<Subst, TypeErrorKind> {
     }
 }
 
-/// Type error with optional context
+/// Type error with optional context and source location
 #[derive(Debug)]
 pub struct TypeError {
     pub kind: TypeErrorKind,
     pub context: Option<String>,
+    pub span: Option<crate::ast::Span>,
 }
 
 impl TypeError {
     pub fn new(kind: TypeErrorKind) -> Self {
-        TypeError { kind, context: None }
+        TypeError { kind, context: None, span: None }
     }
 
     pub fn in_context(kind: TypeErrorKind, ctx: impl Into<String>) -> Self {
-        TypeError { kind, context: Some(ctx.into()) }
+        TypeError { kind, context: Some(ctx.into()), span: None }
     }
 }
 
@@ -340,7 +341,13 @@ impl fmt::Display for TypeError {
             TypeErrorKind::Other(msg) => write!(f, "{}", msg)?,
         }
         if let Some(ctx) = &self.context {
-            write!(f, "\n  in {}", ctx)?;
+            if let Some(span) = &self.span {
+                write!(f, "\n  at {}:{}, in {}", span.line, span.col, ctx)?;
+            } else {
+                write!(f, "\n  in {}", ctx)?;
+            }
+        } else if let Some(span) = &self.span {
+            write!(f, "\n  at {}:{}", span.line, span.col)?;
         }
         Ok(())
     }
