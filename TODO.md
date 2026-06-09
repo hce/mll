@@ -14,7 +14,7 @@ MATA-LL TODO
 
 - [x] Better error messages (line numbers on type errors)
 - [x] where clauses in functions (parsed, codegen incomplete)
-- [ ] Operator sections: (+1), (1+)
+- [x] Operator sections: (+1), (1+)
 - [x] deriving (auto-generate Show, Eq instances)
 - [ ] Lua bytecode output (the spec's ultimate goal)
 

@@ -1008,20 +1008,69 @@ impl Parser {
             }
             Token::LeftParen => {
                 self.advance();
-                // Operator as function: (+)
+
+                // Check for operator-starting forms: (+), (+1), (-)
                 if let Token::Operator(op) = self.peek().clone() {
-                    self.advance();
+                    self.advance(); // consume operator
                     if self.at(&Token::RightParen) {
+                        // (op) — operator as function
                         self.advance();
                         return Ok(Expr::OpFunc(op));
                     }
-                    // It's a parenthesized expression starting with a negative or something
-                    // put the operator back... actually let's handle it as a prefix
+                    if op == "-" {
+                        // (-expr) is negation, not a section
+                        let inner = self.parse_expr()?;
+                        self.expect(&Token::RightParen)?;
+                        return Ok(Expr::Paren(Box::new(Expr::Negate(Box::new(inner)))));
+                    }
+                    // (op expr) — right section: \x -> x op expr
+                    let rhs = self.parse_expr()?;
+                    self.expect(&Token::RightParen)?;
+                    return Ok(Expr::Lambda {
+                        params: vec!["_sec".into()],
+                        body: Box::new(Expr::InfixApp {
+                            op,
+                            lhs: Box::new(Expr::Var("_sec".into())),
+                            rhs: Box::new(rhs),
+                        }),
+                    });
                 }
+
+                // () — unit
                 if self.at(&Token::RightParen) {
                     self.advance();
                     return Ok(Expr::Lit(Literal::Bool(true))); // unit value, placeholder
                 }
+
+                // Try to detect left section: (expr op)
+                // Parse application-level (no infix) and check for op )
+                let save_pos = self.pos;
+                let save_indent = self.current_indent;
+                let lhs = self.parse_expr_app()?;
+                if let Token::Operator(op) = self.peek().clone() {
+                    {
+                        let after_op = self.pos + 1;
+                        if after_op < self.tokens.len() {
+                            if self.tokens[after_op].token == Token::RightParen {
+                                // (expr op) — left section: \x -> expr op x
+                                self.advance(); // consume operator
+                                self.advance(); // consume )
+                                return Ok(Expr::Lambda {
+                                    params: vec!["_sec".into()],
+                                    body: Box::new(Expr::InfixApp {
+                                        op,
+                                        lhs: Box::new(lhs),
+                                        rhs: Box::new(Expr::Var("_sec".into())),
+                                    }),
+                                });
+                            }
+                        }
+                    }
+                }
+
+                // Not a section — backtrack and parse full expression
+                self.pos = save_pos;
+                self.current_indent = save_indent;
                 let expr = self.parse_expr()?;
                 self.expect(&Token::RightParen)?;
                 Ok(Expr::Paren(Box::new(expr)))
