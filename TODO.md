@@ -1,24 +1,51 @@
 MATA-LL TODO
 ============
 
-## Specified but not implemented
+## Completed
 
-- [x] User-defined type families (parser skips them)
-- [x] Kind checking (Type, Symbol, Fn — specified but not enforced)
-- [x] Superclass constraints on instance declarations
 - [x] Record field accessors (person.name)
 - [x] newtype codegen (zero-cost wrapping)
 - [x] Exhaustiveness checking for pattern matches
-
-## Practically useful
-
 - [x] Better error messages (line numbers on type errors)
-- [x] where clauses in functions (parsed, codegen incomplete)
+- [x] where clauses in functions
 - [x] Operator sections: (+1), (1+)
 - [x] deriving (auto-generate Show, Eq instances)
+- [x] Apply final substitution to TIR
+- [x] Prelude as .mll
+- [x] User-defined type families
+- [x] Kind checking (Type, Symbol, Fn)
+- [x] Superclass constraints on instance declarations
+- [x] Either, Ordering types in prelude
+- [x] Show instance enforcement
+- [x] Mutual recursion support
+- [x] Composition codegen fix
 
+## Typeclasses and dispatch
 
-## Architectural
+- [ ] Eq as a proper typeclass gating == and /=
+- [ ] Ord as a proper typeclass gating <, >, <=, >=, compare
+- [ ] Functor / Applicative / Monad hierarchy (spec lines 370-388)
+- [ ] Desugar do-notation through >>= instead of hardwiring
 
-- [x] Apply final substitution to TIR (unresolved type vars limit monomorphization)
-- [x] Prelude as .mll (now possible with lists and FFI)
+## Missing types and values
+
+- [ ] HashMap k v (intrinsic dictionary type)
+- [ ] Any type (Lua interop: String | Integer | Number | Bool | Null | ...)
+- [ ] getArgs :: IO [String]
+- [ ] exit :: IO ExitValue (data ExitValue = Normal | Err Integer)
+
+## Language features
+
+- [ ] GADTs (parser recognizes syntax, type checker discards type info)
+- [ ] Record construction with named fields: Person { perName = "Morpheus" }
+- [ ] Qualified import name prefixing (import qualified Data.Tree as T)
+- [ ] Orphan instance detection
+- [ ] Polymorphic recursion detection (clear error message)
+- [ ] Process intrinsic declarations properly
+- [ ] Expression type ascription (expr :: Type)
+- [ ] when (needs lazy IO or thunked actions)
+
+## Can defer (spec says so)
+
+- [ ] Operator fixity declarations (Haskell defaults hardcoded)
+- [ ] Lambda pattern matching
