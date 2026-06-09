@@ -65,8 +65,16 @@ impl CodeGen {
             self.emit_line("");
         }
 
-        // Emit functions
+        // Emit functions (main last, so specializations are defined before use)
+        let mut main_fn = None;
         for func in &module.functions {
+            if func.name == "main" {
+                main_fn = Some(func);
+            } else {
+                self.gen_function(func);
+            }
+        }
+        if let Some(func) = main_fn {
             self.gen_function(func);
         }
 
