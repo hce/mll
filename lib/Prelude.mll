@@ -10,6 +10,11 @@ assert :: Bool -> String -> IO ()
 assert True _ = putStrLn "."
 assert False msg = error msg
 
+-- Common data types
+data Either a b = Left a | Right b
+
+data Ordering = LT | EQ | GT
+
 -- Identity and combinators
 id :: a -> a
 id x = x
