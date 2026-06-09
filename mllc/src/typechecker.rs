@@ -346,7 +346,6 @@ impl Checker {
         //   head, tail, map, filter, foldl, foldr, take, zipWith, length, reverse
         let entries: Vec<(&str, Vec<TyVar>, Ty)> = vec![
             ("print", vec![], Ty::arrow(Ty::Con("String".into()), Ty::io(Ty::Unit))),
-            ("show", vec![a.clone()], Ty::arrow(ta.clone(), Ty::Con("String".into()))),
             ("++", vec![], Ty::fun(&[Ty::Con("String".into()), Ty::Con("String".into())], Ty::Con("String".into()))),
             ("$", vec![a.clone(), b.clone()], Ty::fun(&[Ty::arrow(ta.clone(), tb.clone()), ta.clone()], tb.clone())),
             (".", vec![a.clone(), b.clone(), c.clone()], Ty::fun(&[Ty::arrow(tb.clone(), tc.clone()), Ty::arrow(ta.clone(), tb.clone()), ta.clone()], tc.clone())),
@@ -433,6 +432,35 @@ impl Checker {
                 ta.clone(),
             ),
         });
+
+        // Built-in Show typeclass
+        let show_ty = Ty::arrow(ta.clone(), Ty::Con("String".into()));
+        self.classes.insert("Show".to_string(), ClassInfo {
+            name: "Show".to_string(),
+            type_var: "a".to_string(),
+            superclasses: vec![],
+            methods: vec![("show".to_string(), show_ty.clone())],
+        });
+        self.env.insert("show".to_string(), Scheme {
+            vars: vec![a.clone()],
+            ty: show_ty,
+        });
+
+        // Show instances for base types
+        for type_name in &["Integer", "Number", "String", "Bool", "[]"] {
+            let target = Ty::Con(type_name.to_string());
+            let mangled = format!("show_{}", type_name);
+            let mut method_fns = HashMap::new();
+            method_fns.insert("show".to_string(), mangled);
+            self.instances.insert(
+                ("Show".to_string(), type_name.to_string()),
+                InstanceInfo {
+                    class_name: "Show".to_string(),
+                    target_type: target,
+                    method_fns,
+                },
+            );
+        }
     }
 
     fn init_kinds(&mut self) {

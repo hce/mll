@@ -813,4 +813,8 @@ local function max(a, b) return math.max(a, b) end
 local function min(a, b) return math.min(a, b) end
 local function Just(x) return x end
 local Nothing = nil
+local function show_Integer(x) return show(x) end
+local function show_Number(x) return show(x) end
+local function show_String(x) return show(x) end
+local function show_Bool(x) return show(x) end
 "#;

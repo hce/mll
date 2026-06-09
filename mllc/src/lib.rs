@@ -96,6 +96,10 @@ pub fn compile(source: &str, source_dir: &Path, lib_paths: &[&Path]) -> Result<C
     let mut mono_pass = mono::Monomorphizer::new(&checker);
     let mono_module = mono_pass.run(tir_module);
 
+    if !mono_pass.errors.is_empty() {
+        return Err(CompileError::Type(mono_pass.errors));
+    }
+
     // Generate Lua
     let lua_code = codegen::generate(&mono_module);
 

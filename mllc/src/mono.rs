@@ -31,6 +31,8 @@ pub struct Monomorphizer {
     class_methods: HashSet<String>,
     /// Instance resolution: (method_name, type_string) -> mangled function name
     instance_methods: HashMap<(String, String), String>,
+    /// Errors collected during monomorphization
+    pub errors: Vec<String>,
 }
 
 impl Monomorphizer {
@@ -78,6 +80,7 @@ impl Monomorphizer {
             counter: 0,
             class_methods,
             instance_methods,
+            errors: Vec::new(),
         }
     }
 
@@ -121,6 +124,19 @@ impl Monomorphizer {
             record_accessors: module.record_accessors,
             newtypes: module.newtypes,
         }
+    }
+
+    /// Check if a parameterized instance exists (e.g., Show [a] for Show [Integer])
+    fn has_parameterized_instance(&self, method: &str, concrete_ty: &Ty) -> bool {
+        let base = match concrete_ty {
+            Ty::List(_) => "[]",
+            Ty::App(f, _) => match f.as_ref() {
+                Ty::Con(name) => name.as_str(),
+                _ => return false,
+            },
+            _ => return false,
+        };
+        self.instance_methods.contains_key(&(method.to_string(), base.to_string()))
     }
 
     fn is_polymorphic(&self, ty: &Ty) -> bool {
@@ -184,9 +200,13 @@ impl Monomorphizer {
                     // Extract the first argument type from the function type
                     if let Some(arg_ty) = self.first_arg_type(&ty) {
                         let ty_str = format!("{}", arg_ty);
-                        let key = (name.clone(), ty_str);
+                        let key = (name.clone(), ty_str.clone());
                         if let Some(mangled) = self.instance_methods.get(&key).cloned() {
                             return TExpr { kind: TExprKind::Var(mangled), ty };
+                        } else if !self.has_parameterized_instance(name, &arg_ty) {
+                            self.errors.push(format!(
+                                "No instance for '{}' on type '{}'", name, ty_str
+                            ));
                         }
                     }
                 }

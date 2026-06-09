@@ -47,3 +47,22 @@ mll_test!(strings, "strings.mll");
 mll_test!(operators, "operators.mll");
 mll_test!(let_exprs, "let_exprs.mll");
 mll_test!(ffi, "ffi.mll");
+mll_test!(show_required, "show_required.mll");
+
+// Compile-error tests: these SHOULD fail to compile
+#[test]
+fn show_without_instance_rejected() {
+    let source = r#"
+data Secret = Secret Integer
+
+main :: IO ()
+main = putStrLn (show (Secret 42))
+"#;
+    match mllc::compile(source, Path::new("."), &[]) {
+        Err(e) => {
+            let msg = format!("{}", e);
+            assert!(msg.contains("No instance"), "Expected 'No instance' error, got: {}", msg);
+        }
+        Ok(_) => panic!("Expected compilation to fail for show without Show instance"),
+    }
+}
