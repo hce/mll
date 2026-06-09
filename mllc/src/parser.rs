@@ -854,14 +854,50 @@ impl Parser {
     }
 
     fn parse_expr_app(&mut self) -> Result<Expr, String> {
-        let mut func = self.parse_expr_atom()?;
+        let mut func = self.parse_expr_atom_dotted()?;
 
         while self.is_expr_atom_start_in_context() {
-            let arg = self.parse_expr_atom()?;
+            let arg = self.parse_expr_atom_dotted()?;
             func = Expr::App(Box::new(func), Box::new(arg));
         }
 
         Ok(func)
+    }
+
+    /// Parse an atom optionally followed by one or more `.field` accesses.
+    /// `expr.field` desugars to `(field expr)`.
+    /// Only applies when `.` is adjacent to the preceding token (no space),
+    /// to distinguish from function composition `f . g`.
+    fn parse_expr_atom_dotted(&mut self) -> Result<Expr, String> {
+        let mut expr = self.parse_expr_atom()?;
+
+        while self.at(&Token::Operator(".".to_string())) {
+            // Check adjacency: the '.' must be on the same line as the
+            // previous token and immediately follow it (no whitespace).
+            let prev_tok = &self.tokens[self.pos - 1];
+            let dot_tok = &self.tokens[self.pos];
+            if dot_tok.line != prev_tok.line {
+                break;
+            }
+            // Estimate end column of previous token
+            let prev_end = prev_tok.col + token_len(&prev_tok.token);
+            if dot_tok.col != prev_end {
+                break; // there's a gap — this is composition, not field access
+            }
+            if self.pos + 1 < self.tokens.len() {
+                if let Token::Ident(_) = &self.tokens[self.pos + 1].token {
+                    self.advance(); // consume '.'
+                    if let Token::Ident(field) = self.peek().clone() {
+                        self.advance(); // consume field name
+                        expr = Expr::App(Box::new(Expr::Var(field)), Box::new(expr));
+                        continue;
+                    }
+                }
+            }
+            break;
+        }
+
+        Ok(expr)
     }
 
     /// Check if the next token could start an expression atom,
@@ -1320,6 +1356,23 @@ fn operator_precedence(op: &str) -> (u8, u8) {
         "^" => (9, 8), // right-associative
         "." => (9, 10),
         _ => (9, 10), // default high precedence
+    }
+}
+
+/// Estimate the source length of a token for adjacency checks.
+fn token_len(tok: &Token) -> usize {
+    match tok {
+        Token::Ident(s) | Token::UpperIdent(s) | Token::StrLit(s) => s.len(),
+        Token::Operator(s) => s.len(),
+        Token::IntLit(n) => format!("{}", n).len(),
+        Token::NumLit(n) => format!("{}", n).len(),
+        Token::LeftParen | Token::RightParen | Token::LeftBracket
+        | Token::RightBracket | Token::LeftBrace | Token::RightBrace
+        | Token::Comma | Token::Semicolon | Token::Backtick
+        | Token::Backslash | Token::Underscore | Token::At => 1,
+        Token::Arrow | Token::FatArrow | Token::DblColon | Token::Eq
+        | Token::Pipe | Token::Bind => 2,
+        _ => 1,
     }
 }
 
