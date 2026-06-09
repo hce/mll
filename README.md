@@ -13,10 +13,9 @@ possible with Lua without breaking boundaries to Lua.
 Specifically:
 
 * Add the expressiveness, fun and safety of haskell to Lua
-* Stay 100% compatible to Lua 5.5 (or later) bytecode
+* Target the Lua 5.4+ VM; compile to Lua source for safe loading via mlua
 * No need for a separate runtime, use zero-cost abstractions
 * If zero-cost abstractions don't fully work, use library functions
-* Don't transpile to Lua; generate Lua bytecode directly
 * Incorporate new type system research where possible and useful
 * But once a stable version is reached, stay backwards compatible
 * Have an easy interface to plain Lua

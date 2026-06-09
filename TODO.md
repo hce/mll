@@ -16,7 +16,7 @@ MATA-LL TODO
 - [x] where clauses in functions (parsed, codegen incomplete)
 - [x] Operator sections: (+1), (1+)
 - [x] deriving (auto-generate Show, Eq instances)
-- [ ] Lua bytecode output (the spec's ultimate goal)
+
 
 ## Architectural
 
