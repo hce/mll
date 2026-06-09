@@ -216,6 +216,19 @@ impl Monomorphizer {
                     let mangled = if let Some(existing) = self.specializations.get(&key) {
                         existing.clone()
                     } else {
+                        // Check for polymorphic recursion (too many specializations)
+                        let spec_count = self.specializations.keys()
+                            .filter(|k| k.name == *name)
+                            .count();
+                        if spec_count > 16 {
+                            self.errors.push(format!(
+                                "Polymorphic recursion detected in '{}': \
+                                 too many type specializations (the function likely calls \
+                                 itself at a different type in each recursive step)",
+                                name
+                            ));
+                            return TExpr { kind: expr.kind, ty };
+                        }
                         let mangled = self.mangle_name(name, &ty);
                         self.specializations.insert(key, mangled.clone());
                         if let Some(poly_fn) = self.poly_fns.get(name).cloned() {

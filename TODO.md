@@ -40,7 +40,7 @@ MATA-LL TODO
 - [x] Record construction with named fields: Person { perName = "Morpheus" }
 - [ ] Qualified import name prefixing (import qualified Data.Tree as T)
 - [ ] Orphan instance detection
-- [ ] Polymorphic recursion detection (clear error message)
+- [x] Polymorphic recursion detection (specialization depth limit)
 - [ ] Process intrinsic declarations properly
 - [ ] Expression type ascription (expr :: Type)
 - [ ] when (needs lazy IO or thunked actions)
