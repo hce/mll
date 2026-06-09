@@ -5,6 +5,9 @@
 putStrLn :: String -> LuaIO "print" ()
 sqrt :: Number -> LuaPure "math.sqrt" Number
 
+-- Process control
+data ExitValue = Normal | Err Integer
+
 -- Testing
 assert :: Bool -> String -> IO ()
 assert True _ = putStrLn "."

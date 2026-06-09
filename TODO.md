@@ -31,8 +31,8 @@ MATA-LL TODO
 
 - [ ] HashMap k v (intrinsic dictionary type)
 - [ ] Any type (Lua interop: String | Integer | Number | Bool | Null | ...)
-- [ ] getArgs :: IO [String]
-- [ ] exit :: IO ExitValue (data ExitValue = Normal | Err Integer)
+- [x] getArgs :: IO [String]
+- [x] exit :: IO ExitValue (data ExitValue = Normal | Err Integer)
 
 ## Language features
 

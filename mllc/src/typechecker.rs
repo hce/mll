@@ -353,6 +353,8 @@ impl Checker {
             ("error", vec![a.clone()], Ty::arrow(Ty::Con("String".into()), ta.clone())),
             ("otherwise", vec![], Ty::Con("Bool".into())),
             ("pure", vec![], Ty::io(Ty::Unit)),
+            ("getArgs", vec![], Ty::io(Ty::list(Ty::Con("String".into())))),
+            ("exit", vec![], Ty::arrow(Ty::Con("ExitValue".into()), Ty::io(Ty::Unit))),
         ];
         for (name, vars, ty) in entries {
             self.env.insert(name.into(), Scheme { vars, ty });

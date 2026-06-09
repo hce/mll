@@ -875,4 +875,14 @@ local function ord_le__String(a, b) return a <= b end
 local function ord_ge__Integer(a, b) return a >= b end
 local function ord_ge__Number(a, b) return a >= b end
 local function ord_ge__String(a, b) return a >= b end
+local function getArgs()
+    local result = nil
+    if arg then
+        for i = #arg, 1, -1 do result = __mll_cons(arg[i], result) end
+    end
+    return result
+end
+local function exit_(code)
+    if code == 1 then os.exit(0) else os.exit(code[2]) end
+end
 "#;
