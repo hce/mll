@@ -44,6 +44,16 @@ impl std::fmt::Display for CompileError {
     }
 }
 
+/// The MLL prelude source, embedded at compile time.
+const PRELUDE_MLL: &str = include_str!("../../lib/Prelude.mll");
+
+/// Parse and return the prelude declarations.
+fn parse_prelude() -> Result<Vec<ast::Decl>, CompileError> {
+    let tokens = lexer::lex(PRELUDE_MLL).map_err(CompileError::Lex)?;
+    let module = parser::parse(&tokens).map_err(CompileError::Parse)?;
+    Ok(module.decls)
+}
+
 /// Compile mll source code to Lua.
 ///
 /// `source`: the .mll source code
@@ -62,6 +72,14 @@ pub fn compile(source: &str, source_dir: &Path, lib_paths: &[&Path]) -> Result<C
         loader.add_search_path(path.to_path_buf());
     }
     let module = loader.resolve_imports(&parsed).map_err(CompileError::Import)?;
+
+    // Merge prelude declarations (prepend before user declarations)
+    let prelude_decls = parse_prelude()?;
+    let module = ast::Module {
+        decls: prelude_decls.into_iter()
+            .chain(module.decls.into_iter())
+            .collect(),
+    };
 
     // Type check
     let mut checker = typechecker::Checker::new();

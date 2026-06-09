@@ -21,4 +21,4 @@ MATA-LL TODO
 ## Architectural
 
 - [x] Apply final substitution to TIR (unresolved type vars limit monomorphization)
-- [ ] Prelude as .mll (now possible with lists and FFI)
+- [x] Prelude as .mll (now possible with lists and FFI)

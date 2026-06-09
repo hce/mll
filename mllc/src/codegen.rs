@@ -309,28 +309,47 @@ impl CodeGen {
                 for (pi, pat) in clause.patterns.iter().enumerate() {
                     self.collect_pattern_conditions(&params[pi], pat, &mut conditions, &mut bindings);
                 }
-                for (var, val) in &bindings {
-                    self.emit_line(&format!("local {} = {}", var, val));
-                }
-                for (gi, guard) in clause.guards.iter().enumerate() {
-                    let gkw = if i == 0 && gi == 0 { "if" } else { "elseif" };
-                    self.emit_indent(); self.emit(&format!("{} ", gkw));
-                    let mut sub = CodeGen::new();
-                    sub.constructors = self.constructors.clone();
-                    sub.newtypes = self.newtypes.clone();
-                    sub.gen_expr(&guard.condition);
-                    let guard_str = sub.output;
-                    if conditions.is_empty() {
-                        self.emit(&guard_str);
-                    } else {
-                        let mut all = conditions.clone();
-                        all.push(guard_str);
-                        self.emit(&all.join(" and "));
-                    }
-                    self.emit(" then\n");
+                if !conditions.is_empty() {
+                    // Wrap in a pattern-matching if block, then test guards inside
+                    self.emit_indent();
+                    self.emit(&format!("{} {} then\n", keyword, conditions.join(" and ")));
                     self.indent += 1;
-                    self.emit_indent(); self.emit("return "); self.gen_expr(&guard.body); self.emit("\n");
+                    for (var, val) in &bindings {
+                        self.emit_line(&format!("local {} = {}", var, val));
+                    }
+                    for (gi, guard) in clause.guards.iter().enumerate() {
+                        let gkw = if gi == 0 { "if" } else { "elseif" };
+                        self.emit_indent(); self.emit(&format!("{} ", gkw));
+                        let mut sub = CodeGen::new();
+                        sub.constructors = self.constructors.clone();
+                        sub.newtypes = self.newtypes.clone();
+                        sub.gen_expr(&guard.condition);
+                        self.emit(&sub.output);
+                        self.emit(" then\n");
+                        self.indent += 1;
+                        self.emit_indent(); self.emit("return "); self.gen_expr(&guard.body); self.emit("\n");
+                        self.indent -= 1;
+                    }
+                    self.emit_line("end");
                     self.indent -= 1;
+                } else {
+                    // No pattern conditions, just guards
+                    for (var, val) in &bindings {
+                        self.emit_line(&format!("local {} = {}", var, val));
+                    }
+                    for (gi, guard) in clause.guards.iter().enumerate() {
+                        let gkw = if i == 0 && gi == 0 { "if" } else { "elseif" };
+                        self.emit_indent(); self.emit(&format!("{} ", gkw));
+                        let mut sub = CodeGen::new();
+                        sub.constructors = self.constructors.clone();
+                        sub.newtypes = self.newtypes.clone();
+                        sub.gen_expr(&guard.condition);
+                        self.emit(&sub.output);
+                        self.emit(" then\n");
+                        self.indent += 1;
+                        self.emit_indent(); self.emit("return "); self.gen_expr(&guard.body); self.emit("\n");
+                        self.indent -= 1;
+                    }
                 }
             } else {
                 let mut conditions = Vec::new();
@@ -375,7 +394,7 @@ impl CodeGen {
 
     fn collect_pattern_conditions(&self, scrutinee: &str, pattern: &TPattern, conditions: &mut Vec<String>, bindings: &mut Vec<(String, String)>) {
         match pattern {
-            TPattern::Var(name, _) => { bindings.push((name.clone(), scrutinee.to_string())); }
+            TPattern::Var(name, _) => { bindings.push((sanitize_name(name), scrutinee.to_string())); }
             TPattern::Wildcard => {}
             TPattern::LitPat(lit) => {
                 let s = match lit {
@@ -749,26 +768,23 @@ pub fn generate(module: &TModule) -> String {
     cg.output
 }
 
-const PRELUDE: &str = r#"-- MLL Prelude
+const PRELUDE: &str = r#"-- MLL Runtime
 
--- List API (overridable by host)
--- Tails can be thunks (functions) for lazy evaluation
+-- List primitives (internal)
 local function __mll_cons(h, t) return {h, t} end
 local function __mll_lazy_cons(h, thunk) return {h, thunk, __lazy = true} end
 local function __mll_head(l) return l[1] end
 local function __mll_tail(l)
     if l.__lazy then
-        -- Force the thunk and cache the result
         l[2] = l[2]()
         l.__lazy = nil
     end
     return l[2]
 end
 
--- engage is the identity: LuaFunction is already a Lua function
+-- Primitives that require Lua runtime dispatch
 local function engage(f) return f end
 local function liftIO(action) return action end
-local function putStrLn(s) print(s) end
 local function show(x)
     if type(x) == "number" then return tostring(x)
     elseif type(x) == "string" then return x
@@ -776,9 +792,7 @@ local function show(x)
         if x then return "True" else return "False" end
     elseif type(x) == "nil" then return "Nothing"
     elseif type(x) == "table" then
-        -- Check if this is a cons cell (list)
         if x[2] ~= nil or (x[1] ~= nil and type(x[2]) == "nil") then
-            -- Could be a list, try to show as one
             local parts = {}
             local cur = x
             local is_list = true
@@ -794,65 +808,7 @@ local function show(x)
         return "{" .. table.concat(parts, ", ") .. "}"
     else return tostring(x) end
 end
-local function id(x) return x end
-local function const_(a) return function(_) return a end end
-local function flip(f) return function(a, b) return f(b, a) end end
+local function error_(msg) error(msg) end
 local function max(a, b) return math.max(a, b) end
 local function min(a, b) return math.min(a, b) end
-local function sqrt(x) return math.sqrt(x) end
-local function error_(msg) error(msg) end
-local function head(xs) return __mll_head(xs) end
-local function tail(xs) return __mll_tail(xs) end
-local function map(f, xs)
-    if xs == nil then return nil end
-    return __mll_lazy_cons(f(__mll_head(xs)), function()
-        return map(f, __mll_tail(xs))
-    end)
-end
-local function filter(pred, xs)
-    if xs == nil then return nil end
-    local h = __mll_head(xs)
-    if pred(h) then
-        return __mll_lazy_cons(h, function() return filter(pred, __mll_tail(xs)) end)
-    else
-        return filter(pred, __mll_tail(xs))
-    end
-end
-local function foldl(f, acc, xs)
-    local cur = xs
-    while cur ~= nil do
-        acc = f(acc, __mll_head(cur))
-        cur = __mll_tail(cur)
-    end
-    return acc
-end
-local function foldr(f, acc, xs)
-    if xs == nil then return acc end
-    return f(__mll_head(xs), foldr(f, acc, __mll_tail(xs)))
-end
-local function take(n, xs)
-    if n <= 0 or xs == nil then return nil end
-    return __mll_cons(__mll_head(xs), take(n - 1, __mll_tail(xs)))
-end
-local function zipWith(f, xs, ys)
-    if xs == nil or ys == nil then return nil end
-    return __mll_lazy_cons(f(__mll_head(xs), __mll_head(ys)), function()
-        return zipWith(f, __mll_tail(xs), __mll_tail(ys))
-    end)
-end
-local function length(xs)
-    local n = 0
-    local cur = xs
-    while cur ~= nil do n = n + 1; cur = __mll_tail(cur) end
-    return n
-end
-local function reverse(xs)
-    local acc = nil
-    local cur = xs
-    while cur ~= nil do
-        acc = __mll_cons(__mll_head(cur), acc)
-        cur = __mll_tail(cur)
-    end
-    return acc
-end
 "#;

@@ -341,19 +341,17 @@ impl Checker {
         let tb = Ty::Var(b.clone());
         let tc = Ty::Var(c.clone());
 
+        // Only register types for builtins that are NOT provided by Prelude.mll
+        // Prelude.mll provides: putStrLn, sqrt, id, const, flip,
+        //   head, tail, map, filter, foldl, foldr, take, zipWith, length, reverse
         let entries: Vec<(&str, Vec<TyVar>, Ty)> = vec![
-            ("putStrLn", vec![], Ty::arrow(Ty::Con("String".into()), Ty::io(Ty::Unit))),
             ("print", vec![], Ty::arrow(Ty::Con("String".into()), Ty::io(Ty::Unit))),
             ("show", vec![a.clone()], Ty::arrow(ta.clone(), Ty::Con("String".into()))),
             ("++", vec![], Ty::fun(&[Ty::Con("String".into()), Ty::Con("String".into())], Ty::Con("String".into()))),
             ("$", vec![a.clone(), b.clone()], Ty::fun(&[Ty::arrow(ta.clone(), tb.clone()), ta.clone()], tb.clone())),
             (".", vec![a.clone(), b.clone(), c.clone()], Ty::fun(&[Ty::arrow(tb.clone(), tc.clone()), Ty::arrow(ta.clone(), tb.clone()), ta.clone()], tc.clone())),
-            ("id", vec![a.clone()], Ty::arrow(ta.clone(), ta.clone())),
-            ("const", vec![a.clone(), b.clone()], Ty::fun(&[ta.clone(), tb.clone()], ta.clone())),
-            ("flip", vec![a.clone(), b.clone(), c.clone()], Ty::fun(&[Ty::fun(&[ta.clone(), tb.clone()], tc.clone()), tb.clone(), ta.clone()], tc.clone())),
             ("not", vec![], Ty::arrow(Ty::Con("Bool".into()), Ty::Con("Bool".into()))),
             ("error", vec![a.clone()], Ty::arrow(Ty::Con("String".into()), ta.clone())),
-            ("sqrt", vec![], Ty::arrow(Ty::Con("Number".into()), Ty::Con("Number".into()))),
             ("otherwise", vec![], Ty::Con("Bool".into())),
         ];
         for (name, vars, ty) in entries {
@@ -374,10 +372,7 @@ impl Checker {
         for name in &["mod", "div"] {
             self.env.insert(name.to_string(), Scheme { vars: vec![], ty: Ty::fun(&[Ty::Con("Integer".into()), Ty::Con("Integer".into())], Ty::Con("Integer".into())) });
         }
-        self.env.insert("map".into(), Scheme { vars: vec![a.clone(), b.clone()], ty: Ty::fun(&[Ty::arrow(ta.clone(), tb.clone()), Ty::list(ta.clone())], Ty::list(tb.clone())) });
-        self.env.insert("filter".into(), Scheme { vars: vec![a.clone(), b.clone()], ty: Ty::fun(&[Ty::arrow(ta.clone(), Ty::Con("Bool".into())), Ty::list(ta.clone())], Ty::list(ta.clone())) });
-        self.env.insert("foldl".into(), Scheme { vars: vec![a.clone(), b.clone()], ty: Ty::fun(&[Ty::fun(&[tb.clone(), ta.clone()], tb.clone()), tb.clone(), Ty::list(ta.clone())], tb.clone()) });
-        self.env.insert("foldr".into(), Scheme { vars: vec![a.clone(), b.clone()], ty: Ty::fun(&[Ty::fun(&[ta.clone(), tb.clone()], tb.clone()), tb.clone(), Ty::list(ta.clone())], tb.clone()) });
+        // map, filter, foldl, foldr are now in Prelude.mll
 
         // Maybe
         self.constructors.insert("Just".into(), ConInfo { type_name: "Maybe".into(), variant_index: 1, total_variants: 2, field_types: vec![ta.clone()], type_vars: vec![a.clone()], result_type: Ty::app(Ty::Con("Maybe".into()), ta.clone()) });
@@ -411,40 +406,7 @@ impl Checker {
             ty: Ty::list(ta.clone()),
         });
 
-        // head :: [a] -> a
-        self.env.insert("head".into(), Scheme {
-            vars: vec![a.clone()],
-            ty: Ty::arrow(Ty::list(ta.clone()), ta.clone()),
-        });
-        // tail :: [a] -> [a]
-        self.env.insert("tail".into(), Scheme {
-            vars: vec![a.clone()],
-            ty: Ty::arrow(Ty::list(ta.clone()), Ty::list(ta.clone())),
-        });
-        // take :: Integer -> [a] -> [a]
-        self.env.insert("take".into(), Scheme {
-            vars: vec![a.clone()],
-            ty: Ty::fun(&[Ty::Con("Integer".into()), Ty::list(ta.clone())], Ty::list(ta.clone())),
-        });
-        // zipWith :: (a -> b -> c) -> [a] -> [b] -> [c]
-        self.env.insert("zipWith".into(), Scheme {
-            vars: vec![a.clone(), b.clone(), c.clone()],
-            ty: Ty::fun(&[
-                Ty::fun(&[ta.clone(), tb.clone()], tc.clone()),
-                Ty::list(ta.clone()),
-                Ty::list(tb.clone()),
-            ], Ty::list(tc.clone())),
-        });
-        // length :: [a] -> Integer
-        self.env.insert("length".into(), Scheme {
-            vars: vec![a.clone()],
-            ty: Ty::arrow(Ty::list(ta.clone()), Ty::Con("Integer".into())),
-        });
-        // reverse :: [a] -> [a]
-        self.env.insert("reverse".into(), Scheme {
-            vars: vec![a.clone()],
-            ty: Ty::arrow(Ty::list(ta.clone()), Ty::list(ta.clone())),
-        });
+        // head, tail, take, zipWith, length, reverse are now in Prelude.mll
 
         // LuaFunction and engage
         let s = TyVar { name: "s".into(), id: u32::MAX };
