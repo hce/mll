@@ -5,6 +5,11 @@
 putStrLn :: String -> LuaIO "print" ()
 sqrt :: Number -> LuaPure "math.sqrt" Number
 
+-- Testing
+assert :: Bool -> String -> IO ()
+assert True _ = putStrLn "."
+assert False msg = error msg
+
 -- Identity and combinators
 id :: a -> a
 id x = x

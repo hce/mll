@@ -811,4 +811,6 @@ end
 local function error_(msg) error(msg) end
 local function max(a, b) return math.max(a, b) end
 local function min(a, b) return math.min(a, b) end
+local function Just(x) return x end
+local Nothing = nil
 "#;

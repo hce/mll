@@ -636,8 +636,25 @@ impl Parser {
         let span = Span::new(loc.line, loc.col);
 
         let mut patterns = Vec::new();
-        while self.is_pattern_start() {
-            patterns.push(self.parse_pattern_atom()?);
+        while self.is_pattern_atom_start() || matches!(self.peek(), Token::UpperIdent(_)) {
+            if let Token::UpperIdent(_) = self.peek() {
+                // Constructor or True/False at clause level — parse as full pattern
+                // but don't consume args (they're separate clause patterns)
+                let pat = match self.peek().clone() {
+                    Token::UpperIdent(name) => {
+                        self.advance();
+                        match name.as_str() {
+                            "True" => Pattern::LitPat(Literal::Bool(true)),
+                            "False" => Pattern::LitPat(Literal::Bool(false)),
+                            _ => Pattern::Constructor { name, args: vec![] },
+                        }
+                    }
+                    _ => unreachable!(),
+                };
+                patterns.push(pat);
+            } else {
+                patterns.push(self.parse_pattern_atom()?);
+            }
         }
 
         // Guards
@@ -1354,14 +1371,21 @@ impl Parser {
     fn parse_pattern(&mut self) -> Result<Pattern, String> {
         let lhs = if let Token::UpperIdent(name) = self.peek().clone() {
             self.advance();
-            let mut args = Vec::new();
-            while self.is_pattern_atom_start() {
-                args.push(self.parse_pattern_atom()?);
-            }
-            if args.is_empty() {
-                Pattern::Constructor { name, args: vec![] }
-            } else {
-                Pattern::Constructor { name, args }
+            // True/False are literal patterns, not constructors
+            match name.as_str() {
+                "True" => Pattern::LitPat(Literal::Bool(true)),
+                "False" => Pattern::LitPat(Literal::Bool(false)),
+                _ => {
+                    let mut args = Vec::new();
+                    while self.is_pattern_atom_start() {
+                        args.push(self.parse_pattern_atom()?);
+                    }
+                    if args.is_empty() {
+                        Pattern::Constructor { name, args: vec![] }
+                    } else {
+                        Pattern::Constructor { name, args }
+                    }
+                }
             }
         } else {
             self.parse_pattern_atom()?

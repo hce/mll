@@ -1,3 +1,3 @@
 [workspace]
-members = ["mll", "mllc"]
+members = ["mll", "mllc", "mll-tests"]
 resolver = "3"
