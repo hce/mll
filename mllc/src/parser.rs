@@ -717,13 +717,35 @@ impl Parser {
             while self.is_pattern_start() {
                 patterns.push(self.parse_pattern_atom()?);
             }
-            self.expect(&Token::Eq)?;
-            let body = self.parse_expr()?;
-            binds.push(LocalDef {
-                name,
-                patterns,
-                body,
-            });
+
+            // Handle guards: go acc i | i <= 0 = acc | otherwise = ...
+            self.skip_newlines_and_indent();
+            if self.at(&Token::Pipe) {
+                // Parse guarded where binding — desugar to if/else chain
+                let mut guards = Vec::new();
+                while self.at(&Token::Pipe) {
+                    self.advance();
+                    let cond = self.parse_expr()?;
+                    self.expect(&Token::Eq)?;
+                    let val = self.parse_expr()?;
+                    guards.push((cond, val));
+                    self.skip_newlines_and_indent();
+                }
+                // Build nested if/else from guards
+                let body = guards.into_iter().rev().fold(
+                    Expr::App(Box::new(Expr::Var("error".into())), Box::new(Expr::Lit(Literal::Str("non-exhaustive guards".into())))),
+                    |else_branch, (cond, val)| Expr::If {
+                        cond: Box::new(cond),
+                        then_branch: Box::new(val),
+                        else_branch: Box::new(else_branch),
+                    },
+                );
+                binds.push(LocalDef { name, patterns, body });
+            } else {
+                self.expect(&Token::Eq)?;
+                let body = self.parse_expr()?;
+                binds.push(LocalDef { name, patterns, body });
+            }
         }
 
         Ok(binds)
