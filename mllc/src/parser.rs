@@ -573,7 +573,18 @@ impl Parser {
 
     fn parse_intrinsic_decl(&mut self) -> Result<Vec<Decl>, String> {
         self.expect(&Token::Intrinsic)?;
-        // Skip intrinsic declarations for now
+        // intrinsic type family Name ... where ... => parse as type family
+        if self.at(&Token::KwType) {
+            return self.parse_type_family_decl();
+        }
+        // intrinsic name :: type => parse as type signature (implementation is compiler-provided)
+        if let Token::Ident(_) = self.peek() {
+            let name = self.expect_ident()?;
+            self.expect(&Token::DblColon)?;
+            let ty = self.parse_type()?;
+            return Ok(vec![Decl::TypeSig { name, ty }]);
+        }
+        // Unknown intrinsic form — skip
         while !self.at_eof() {
             match self.peek() {
                 Token::Indent(n) if *n == 0 => break,
