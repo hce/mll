@@ -572,11 +572,11 @@ impl CodeGen {
                         return;
                     }
                     ">>=" => {
-                        // IO bind: lhs >>= rhs  =>  rhs(lhs)
-                        // lhs is an IO action (evaluated eagerly, returns result)
-                        // rhs is a function (a -> IO b)
+                        // IO bind: lhs >>= rhs  =>  rhs(__mll_run(lhs))
+                        // lhs is an IO action — may be a thunk (function) that
+                        // needs to be called, or an eagerly evaluated value.
                         self.emit("("); self.gen_expr(rhs); self.emit(")(");
-                        self.gen_expr(lhs); self.emit(")");
+                        self.emit("__mll_run("); self.gen_expr(lhs); self.emit("))");
                         return;
                     }
                     "." => {
@@ -797,6 +797,11 @@ local function __mll_tail(l)
         l.__lazy = nil
     end
     return l[2]
+end
+
+-- Run an IO action: if it's a thunk (function), force it; otherwise return as-is
+local function __mll_run(action)
+    if type(action) == "function" then return action() else return action end
 end
 
 -- Primitives that require Lua runtime dispatch
