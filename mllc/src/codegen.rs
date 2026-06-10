@@ -9,6 +9,8 @@ struct CodeGen {
     newtypes: Vec<String>,
     /// Names that have been forward-declared (skip `local` on definition)
     forward_declared: std::collections::HashSet<String>,
+    /// Variables known to hold concrete values (not thunks), skip __force
+    concrete_vars: std::collections::HashSet<String>,
     output: String,
     indent: usize,
 }
@@ -18,6 +20,7 @@ impl CodeGen {
         CodeGen {
             constructors: Vec::new(), newtypes: Vec::new(),
             forward_declared: std::collections::HashSet::new(),
+            concrete_vars: std::collections::HashSet::new(),
             output: String::new(), indent: 0,
         }
     }
@@ -187,8 +190,10 @@ impl CodeGen {
     fn gen_function(&mut self, func: &TFunction) {
         let lua_name = sanitize_name(&func.name);
         let clauses = &func.clauses;
+        let saved_concrete = self.concrete_vars.clone();
+        self.concrete_vars.clear();
 
-        if clauses.is_empty() { return; }
+        if clauses.is_empty() { self.concrete_vars = saved_concrete; return; }
 
         if clauses.len() == 1 && clauses[0].patterns.is_empty() && clauses[0].guards.is_empty() {
             // Check if this is a value binding (non-function type) or a
@@ -222,6 +227,7 @@ impl CodeGen {
                 self.emit("\n");
             }
             self.emit_line("");
+            self.concrete_vars = saved_concrete;
             return;
         }
 
@@ -248,6 +254,7 @@ impl CodeGen {
                 for (i, p) in params.iter().enumerate() {
                     if !matches!(&clause.patterns[i], TPattern::Var(_, _) | TPattern::Wildcard) {
                         self.emit_line(&format!("{} = __force({})", p, p));
+                        self.concrete_vars.insert(p.clone());
                     }
                 }
                 self.gen_where_binds(&clause.where_binds);
@@ -256,6 +263,7 @@ impl CodeGen {
             self.indent -= 1;
             self.emit_line("end");
             self.emit_line("");
+            self.concrete_vars = saved_concrete;
             return;
         }
 
@@ -276,12 +284,14 @@ impl CodeGen {
             });
             if needs_force {
                 self.emit_line(&format!("{} = __force({})", p, p));
+                self.concrete_vars.insert(p.clone());
             }
         }
         self.gen_pattern_match(&params, clauses);
         self.indent -= 1;
         self.emit_line("end");
         self.emit_line("");
+        self.concrete_vars = saved_concrete;
     }
 
     fn gen_where_binds(&mut self, binds: &[TLocalDef]) {
@@ -291,12 +301,14 @@ impl CodeGen {
             let bind = &binds[i];
             if bind.patterns.is_empty() {
                 // Simple value binding: local x = expr
+                let sname = sanitize_name(&bind.name);
                 self.emit_indent();
                 if Self::is_cheap(&bind.body) {
-                    self.emit(&format!("local {} = ", sanitize_name(&bind.name)));
+                    self.emit(&format!("local {} = ", sname));
                     self.gen_expr(&bind.body);
+                    self.concrete_vars.insert(sname);
                 } else {
-                    self.emit(&format!("local {} = __thunk(function() return ", sanitize_name(&bind.name)));
+                    self.emit(&format!("local {} = __thunk(function() return ", sname));
                     self.gen_expr(&bind.body);
                     self.emit(" end)");
                 }
@@ -559,9 +571,14 @@ impl CodeGen {
                 match name.as_str() {
                     "otherwise" => self.emit("true"),
                     _ => {
-                        self.emit("__force(");
-                        self.emit(&sanitize_name(name));
-                        self.emit(")");
+                        let sname = sanitize_name(name);
+                        if self.concrete_vars.contains(&sname) {
+                            self.emit(&sname);
+                        } else {
+                            self.emit("__force(");
+                            self.emit(&sname);
+                            self.emit(")");
+                        }
                     }
                 }
             }
@@ -738,6 +755,7 @@ impl CodeGen {
                     if Self::is_cheap(&bind.body) {
                         self.emit(&format!("local {} = ", bind.name));
                         self.gen_expr(&bind.body); self.emit("\n");
+                        self.concrete_vars.insert(bind.name.clone());
                     } else {
                         self.emit(&format!("local {} = __thunk(function() return ", bind.name));
                         self.gen_expr(&bind.body); self.emit(" end)\n");
