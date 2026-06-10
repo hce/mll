@@ -49,6 +49,8 @@ mll_test!(let_exprs, "let_exprs.mll");
 mll_test!(ffi, "ffi.mll");
 mll_test!(show_required, "show_required.mll");
 mll_test!(either_ordering, "either_ordering.mll");
+mll_test!(dict, "dict.mll");
+mll_test!(hashmap, "hashmap.mll");
 
 // Compile-error tests: these SHOULD fail to compile
 #[test]
