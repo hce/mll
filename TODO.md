@@ -25,6 +25,20 @@ MATA-LL TODO
 - [x] Guards in where-clause bindings
 - [x] Do-notation: break on closing paren
 - [x] __mll_run for IO thunk forcing in >>=
+- [x] Orphan instance detection
+- [x] Process intrinsic declarations properly
+- [x] when :: Bool -> IO () -> IO ()
+- [x] Concrete variable tracking to skip redundant __force calls
+- [x] Tuple types: (a, b, c) with fst, snd
+- [x] Type-specialized show for containers (lists of tuples etc.)
+- [x] LuaIterator type family (Lua iterators → lazy MLL lists)
+- [x] >> operator (IO then)
+- [x] Zero-arg LuaPure constant access (math.pi)
+- [x] Haskell-style newtype syntax (newtype Rad = Rad Number)
+- [x] Method-call FFI (":write" → handle:write())
+- [x] LIO library (file handles, stdin/stdout)
+- [x] LMath library (math.* bindings)
+- [x] CI pipeline with auto-merge dev → main
 
 ## Typeclasses and dispatch
 
@@ -40,16 +54,13 @@ MATA-LL TODO
 - [x] getArgs :: IO [String]
 - [x] exit :: IO ExitValue (data ExitValue = Normal | Err Integer)
 
-## Language features
+## Open
 
-- [x] Record construction with named fields: Person { perName = "Morpheus" }
-- [x] Qualified import name prefixing (import qualified Data.Tree as T)
-- [x] Polymorphic recursion detection (specialization depth limit)
-- [x] Expression type ascription (expr :: Type)
-- [x] Orphan instance detection
-- [x] Process intrinsic declarations properly
-- [x] when (now feasible with non-strict evaluation)
-- [x] Concrete variable tracking to skip redundant __force calls
+- [ ] String escape sequences in codegen (\n etc. emitted as literal newlines)
+- [ ] Eq for tuples (deriving-style element-wise comparison)
+- [ ] LuaFail convention (data LuaFail = Success | Failure for nil-means-error)
+- [ ] LuaUserData as a recognized primitive type (currently just a Con)
+- [ ] Zero-arg LuaIterator (stdinLines) needs IO wrapping to avoid eager eval
 
 ## Can defer (spec says so)
 
