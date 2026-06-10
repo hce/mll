@@ -53,6 +53,11 @@ mll_test!(dict, "dict.mll");
 mll_test!(hashmap, "hashmap.mll");
 mll_test!(gadts, "gadts.mll");
 mll_test!(tuples, "tuples.mll");
+mll_test!(trees, "trees.mll");
+mll_test!(mutual_recursion, "mutual_recursion.mll");
+mll_test!(higher_order, "higher_order.mll");
+mll_test!(fizzbuzz, "fizzbuzz.mll");
+mll_test!(purehashmap, "purehashmap.mll");
 
 // Compile-error tests: these SHOULD fail to compile
 #[test]
@@ -116,11 +121,8 @@ fn examples_compile() {
     let lib_path = Path::new("../lib");
     let examples_dir = Path::new("../examples");
 
-    // Examples expected to fail (type errors, missing modules, etc.)
+    // Examples expected to fail or skip
     let expected_fail: Vec<&str> = vec![
-        "type_error", "type_error2", "type_error3", "type_error4",
-        "imports_err",
-        "imports", "imports2", // missing Lib.MathUtils
         "bench",              // show specialization gap on list display
         "regex_test",         // deep typechecker recursion on CPS types needs larger stack
     ];

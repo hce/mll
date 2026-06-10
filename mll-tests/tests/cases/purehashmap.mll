@@ -1,13 +1,6 @@
--- A pure hash map in MATA-LL.
---
--- Uses an AVL tree indexed by hash values, with association list
--- buckets for collision handling. Requires a hash function per key type.
---
--- Performance: O(log n) per operation (assuming few collisions).
+-- Pure AVL hash map with collision buckets
 
--- Reuse AVL tree as the bucket index
 data Tree v = TEmpty | TNode Integer Integer v (Tree v) (Tree v)
-    deriving Show
 
 theight :: Tree v -> Integer
 theight TEmpty = 0
@@ -51,9 +44,7 @@ tlookup k (TNode _ nk nv left right)
     | k > nk    = tlookup k right
     | otherwise = Just nv
 
--- Association list for collision buckets
 data Bucket k v = BEmpty | BCons k v (Bucket k v)
-    deriving Show
 
 blookup :: k -> Bucket k v -> Maybe v
 blookup _ BEmpty = Nothing
@@ -67,21 +58,12 @@ binsert k v (BCons bk bv rest)
     | k == bk   = BCons k v rest
     | otherwise = BCons bk bv (binsert k v rest)
 
-bdelete :: k -> Bucket k v -> Bucket k v
-bdelete _ BEmpty = BEmpty
-bdelete k (BCons bk bv rest)
-    | k == bk   = rest
-    | otherwise = BCons bk bv (bdelete k rest)
-
 bsize :: Bucket k v -> Integer
 bsize BEmpty = 0
 bsize (BCons _ _ rest) = 1 + bsize rest
 
--- Hash map: Tree of buckets
 data PureMap k v = PureMap (Tree (Bucket k v))
-    deriving Show
 
--- String hash via Lua (MLL strings aren't char lists)
 hashStr :: String -> LuaPure "__mll_hashstr" Integer
 
 pmEmpty :: PureMap k v
@@ -124,15 +106,12 @@ main = do
           $ pmInsert "dave" 40
           $ pmInsert "eve" 28
           $ pmEmpty
-    putStrLn (show (fromMaybe 0 (pmLookup "bob" m)))
-    putStrLn (show (fromMaybe 0 (pmLookup "eve" m)))
-    putStrLn (show (fromMaybe 0 (pmLookup "nobody" m)))
-    putStrLn (show (pmSize m))
-    putStrLn (show (pmMember "alice" m))
-    putStrLn (show (pmMember "nobody" m))
-    -- Update
+    assert (fromMaybe 0 (pmLookup "bob" m) == 25) "lookup bob"
+    assert (fromMaybe 0 (pmLookup "eve" m) == 28) "lookup eve"
+    assert (fromMaybe 0 (pmLookup "nobody" m) == 0) "lookup missing"
+    assert (pmSize m == 5) "size after 5 inserts"
+    assert (pmMember "alice" m) "member alice"
+    assert (not (pmMember "nobody" m)) "not member nobody"
     let m2 = pmInsert "alice" 31 m
-    putStrLn (show (fromMaybe 0 (pmLookup "alice" m2)))
-    putStrLn (show (pmSize m2))
-    -- Show the tree structure
-    putStrLn (show m)
+    assert (fromMaybe 0 (pmLookup "alice" m2) == 31) "update alice"
+    assert (pmSize m2 == 5) "size unchanged after update"
