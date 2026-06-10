@@ -236,4 +236,5 @@ pub enum TLiteral {
     Number(f64),
     Str(String),
     Bool(bool),
+    Unit,
 }

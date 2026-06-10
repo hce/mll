@@ -331,6 +331,7 @@ impl Checker {
             Literal::Number(_) => Ty::Con("Number".into()),
             Literal::Str(_) => Ty::Con("String".into()),
             Literal::Bool(_) => Ty::Con("Bool".into()),
+            Literal::Unit => Ty::Unit,
         }
     }
 
@@ -340,6 +341,7 @@ impl Checker {
             Literal::Number(n) => TLiteral::Number(*n),
             Literal::Str(s) => TLiteral::Str(s.clone()),
             Literal::Bool(b) => TLiteral::Bool(*b),
+            Literal::Unit => TLiteral::Unit,
         }
     }
 

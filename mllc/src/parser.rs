@@ -1220,7 +1220,7 @@ impl Parser {
                 // () — unit
                 if self.at(&Token::RightParen) {
                     self.advance();
-                    return Ok(Expr::Lit(Literal::Bool(true))); // unit value, placeholder
+                    return Ok(Expr::Lit(Literal::Unit));
                 }
 
                 // Try to detect left section: (expr op)

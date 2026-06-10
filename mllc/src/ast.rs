@@ -232,6 +232,7 @@ pub enum Literal {
     Number(f64),
     Str(String),
     Bool(bool),
+    Unit,
 }
 
 /// Type representation.

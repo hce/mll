@@ -461,6 +461,7 @@ impl CodeGen {
                     TLiteral::Number(n) => format!("{}", n),
                     TLiteral::Str(s) => format!("\"{}\"", s),
                     TLiteral::Bool(b) => if *b { "true".into() } else { "false".into() },
+                    TLiteral::Unit => "nil".into(),
                 };
                 conditions.push(format!("{} == {}", scrutinee, s));
             }
@@ -895,6 +896,7 @@ impl CodeGen {
             TLiteral::Str(s) => self.emit(&format!("\"{}\"", s)),
             TLiteral::Bool(true) => self.emit("true"),
             TLiteral::Bool(false) => self.emit("false"),
+            TLiteral::Unit => self.emit("nil"),
         }
     }
 }

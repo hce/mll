@@ -50,10 +50,15 @@ reverse xs = go [] xs
         go acc [] = acc
         go acc (x:rest) = go (x:acc) rest
 
+-- Monadic combinators
+mapM_ :: (a -> IO ()) -> [a] -> IO ()
+mapM_ _ [] = pure ()
+mapM_ f (x:xs) = f x >> mapM_ f xs
+
 -- Conditional execution (non-strict evaluation makes this safe:
 -- the action is thunked and only forced when the condition is true)
 when :: Bool -> IO () -> IO ()
-when cond action = if cond then action else putStrLn ""
+when cond action = if cond then action else pure ()
 
 -- Tuple accessors
 fst :: (a, b) -> a
