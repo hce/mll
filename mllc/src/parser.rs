@@ -1344,7 +1344,8 @@ impl Parser {
 
                 loop {
                     self.skip_newlines_and_indent();
-                    if self.at_eof() || self.current_indent < do_indent {
+                    if self.at_eof() || self.current_indent < do_indent
+                        || self.at(&Token::RightParen) {
                         break;
                     }
 
