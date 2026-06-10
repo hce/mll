@@ -109,3 +109,41 @@ main = putStrLn "ok"
         Ok(_) => panic!("Expected compilation to fail for orphan instance"),
     }
 }
+
+// Examples that should compile successfully
+#[test]
+fn examples_compile() {
+    let lib_path = Path::new("../lib");
+    let examples_dir = Path::new("../examples");
+
+    // Examples expected to fail (type errors, missing modules, etc.)
+    let expected_fail: Vec<&str> = vec![
+        "type_error", "type_error2", "type_error3", "type_error4",
+        "imports_err",
+        "imports", "imports2", // missing Lib.MathUtils
+        "bench",              // show specialization gap on list display
+    ];
+
+    let mut failures = Vec::new();
+    for entry in std::fs::read_dir(examples_dir).expect("Cannot read examples/") {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if path.extension().map_or(true, |e| e != "mll") {
+            continue;
+        }
+        let stem = path.file_stem().unwrap().to_str().unwrap();
+        if expected_fail.contains(&stem) {
+            continue;
+        }
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("Cannot read {}: {}", path.display(), e));
+        let source_dir = path.parent().unwrap_or(Path::new("."));
+        match mllc::compile(&source, source_dir, &[lib_path]) {
+            Ok(_) => {}
+            Err(e) => failures.push(format!("{}: {}", stem, e)),
+        }
+    }
+    if !failures.is_empty() {
+        panic!("Examples failed to compile:\n{}", failures.join("\n"));
+    }
+}
