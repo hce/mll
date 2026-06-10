@@ -293,6 +293,13 @@ impl Parser {
         }
 
         self.expect(&Token::Eq)?;
+        // Skip optional constructor name (Haskell-style: newtype Rad = Rad Number)
+        // MLL newtypes always use the type name as the constructor name.
+        if let Token::UpperIdent(con) = self.peek() {
+            if *con == name {
+                self.advance();
+            }
+        }
         let inner = self.parse_type()?;
 
         Ok(Decl::NewtypeDef {
