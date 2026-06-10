@@ -218,6 +218,9 @@ impl Monomorphizer {
                             return TExpr { kind: TExprKind::Var(mangled), ty };
                         } else if let Some(mangled) = self.resolve_parameterized_instance(name, &arg_ty) {
                             return TExpr { kind: TExprKind::Var(mangled), ty };
+                        } else if matches!(arg_ty, Ty::Tuple(_)) && name == "show" {
+                            // Tuples use the generic runtime show function
+                            return TExpr { kind: TExprKind::Var("show".to_string()), ty };
                         } else {
                             self.errors.push(format!(
                                 "No instance for '{}' on type '{}'", name, ty_str

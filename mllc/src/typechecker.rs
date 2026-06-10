@@ -1094,6 +1094,10 @@ impl Checker {
                 if let Some(inst) = self.instances.get(&key) {
                     return inst.method_fns.get(method_name).cloned();
                 }
+                // Tuples: use the generic runtime show/eq for tuples
+                if matches!(concrete_ty, Ty::Tuple(_)) && method_name == "show" {
+                    return Some("show".to_string());
+                }
             }
         }
         None
