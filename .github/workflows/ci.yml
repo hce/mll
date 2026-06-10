@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [dev]
 
+permissions:
+  contents: write
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -18,3 +21,20 @@ jobs:
 
       - name: Run tests
         run: cargo test --workspace
+
+  merge:
+    needs: test
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Merge dev into main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git merge origin/dev --ff-only
+          git push origin main
