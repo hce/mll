@@ -102,17 +102,10 @@ impl Monomorphizer {
             .map(|f| self.mono_function(f.clone()))
             .collect();
 
-        // Combine original (non-poly) functions with generated specializations
-        let mut result_fns = Vec::new();
-        for f in &functions {
-            if self.poly_fns.contains_key(&f.name) {
-                if !self.specializations.values().any(|v| v.starts_with(&f.name)) {
-                    result_fns.push(f.clone());
-                }
-            } else {
-                result_fns.push(f.clone());
-            }
-        }
+        // Keep all original functions (including polymorphic ones — they serve
+        // as fallbacks for calls inside other polymorphic contexts where types
+        // aren't resolved). Append generated specializations after.
+        let mut result_fns: Vec<TFunction> = functions;
         result_fns.extend(self.generated.drain(..));
 
         TModule {
@@ -211,18 +204,17 @@ impl Monomorphizer {
                     }
                 }
                 // 2. Check for polymorphic function specialization
-                // Also handle recursive calls inside specializations: if the
-                // type is still polymorphic but we already have a specialization
-                // for this function name, use it (the recursive call has the
-                // same concrete type as the enclosing specialization)
+                // Handle calls inside specializations: if the type is still
+                // polymorphic but we have specialization(s) for this function
+                // name, use the most recent one (the recursive/sibling call
+                // shares the same concrete type as the enclosing specialization)
                 if self.poly_fns.contains_key(name) && self.is_polymorphic(&ty) {
-                    // Check if there's exactly one specialization for this name
                     let specs: Vec<_> = self.specializations.iter()
                         .filter(|(k, _)| k.name == *name)
                         .map(|(_, v)| v.clone())
                         .collect();
-                    if specs.len() == 1 {
-                        return TExpr { kind: TExprKind::Var(specs[0].clone()), ty };
+                    if !specs.is_empty() {
+                        return TExpr { kind: TExprKind::Var(specs.last().unwrap().clone()), ty };
                     }
                 }
                 if self.poly_fns.contains_key(name) && !self.is_polymorphic(&ty) {

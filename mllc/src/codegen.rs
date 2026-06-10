@@ -105,14 +105,14 @@ impl CodeGen {
             self.emit_line("");
         }
 
-        // Forward-declare all user functions to support mutual recursion
-        let user_fn_names: Vec<String> = module.functions.iter()
-            .filter(|f| !f.specialized)
+        // Forward-declare all functions (user + specializations) to support
+        // mutual recursion and specialization ordering
+        let all_fn_names: Vec<String> = module.functions.iter()
             .map(|f| sanitize_name(&f.name))
             .collect();
-        if user_fn_names.len() > 1 {
-            self.emit_line(&format!("local {}", user_fn_names.join(", ")));
-            for name in &user_fn_names {
+        if all_fn_names.len() > 1 {
+            self.emit_line(&format!("local {}", all_fn_names.join(", ")));
+            for name in &all_fn_names {
                 self.forward_declared.insert(name.clone());
             }
         }
