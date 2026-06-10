@@ -140,6 +140,7 @@ impl CodeGen {
         }
 
         // Generate module return table for exports
+        // Wrap each export so return values are deep-forced for Lua consumption
         if !module.exports.is_empty() {
             self.emit_line("");
             self.emit_line("-- Exports");
@@ -147,8 +148,9 @@ impl CodeGen {
             self.emit("return {\n");
             self.indent += 1;
             for name in &module.exports {
+                let sname = sanitize_name(name);
                 self.emit_indent();
-                self.emit(&format!("{} = {},\n", name, sanitize_name(name)));
+                self.emit(&format!("{name} = function(...) return __mll_to_lua({sname}(...)) end,\n"));
             }
             self.indent -= 1;
             self.emit_line("}");
@@ -1129,6 +1131,30 @@ local function __mll_tail(l)
         l.__lazy = nil
     end
     return l[2]
+end
+
+-- Deep-force an MLL value for export to Lua.
+-- Converts lazy cons lists to plain Lua arrays, forces thunks, recurses into tuples.
+local function __mll_to_lua(x)
+    x = __force(x)
+    if type(x) ~= "table" then return x end
+    -- Check if it's a cons list (2-element table, not tagged)
+    if x[2] ~= nil and type(x[1]) ~= "string" then
+        -- Could be a cons cell or a tuple; try to walk as a list
+        local result = {}
+        local cur = x
+        local is_list = true
+        while cur ~= nil do
+            if type(cur) ~= "table" then is_list = false; break end
+            result[#result + 1] = __mll_to_lua(__force(cur[1]))
+            cur = __mll_tail(cur)
+        end
+        if is_list then return result end
+    end
+    -- Tuple or ADT: force each element
+    local result = {}
+    for i, v in ipairs(x) do result[i] = __mll_to_lua(v) end
+    return result
 end
 
 -- Run an IO action: if it's a thunk (function), force it; otherwise return as-is
