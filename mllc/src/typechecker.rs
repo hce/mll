@@ -518,8 +518,8 @@ impl Checker {
             );
         }
 
-        // Show instances for base types
-        for type_name in &["Integer", "Number", "String", "Bool", "[]"] {
+        // Show instances for base types and parameterized types
+        for type_name in &["Integer", "Number", "String", "Bool", "[]", "Maybe"] {
             let target = Ty::Con(type_name.to_string());
             let mangled = format!("show_{}", type_name);
             let mut method_fns = HashMap::new();

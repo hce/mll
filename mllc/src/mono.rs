@@ -211,6 +211,20 @@ impl Monomorphizer {
                     }
                 }
                 // 2. Check for polymorphic function specialization
+                // Also handle recursive calls inside specializations: if the
+                // type is still polymorphic but we already have a specialization
+                // for this function name, use it (the recursive call has the
+                // same concrete type as the enclosing specialization)
+                if self.poly_fns.contains_key(name) && self.is_polymorphic(&ty) {
+                    // Check if there's exactly one specialization for this name
+                    let specs: Vec<_> = self.specializations.iter()
+                        .filter(|(k, _)| k.name == *name)
+                        .map(|(_, v)| v.clone())
+                        .collect();
+                    if specs.len() == 1 {
+                        return TExpr { kind: TExprKind::Var(specs[0].clone()), ty };
+                    }
+                }
                 if self.poly_fns.contains_key(name) && !self.is_polymorphic(&ty) {
                     let key = SpecKey { name: name.clone(), ty: format!("{}", ty) };
                     let mangled = if let Some(existing) = self.specializations.get(&key) {
