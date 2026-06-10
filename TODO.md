@@ -56,10 +56,9 @@ MATA-LL TODO
 
 ## Open
 
-- [ ] String escape sequences in codegen (\n etc. emitted as literal newlines)
-- [ ] Eq for tuples (deriving-style element-wise comparison)
-- [ ] LuaFail convention (data LuaFail = Success | Failure for nil-means-error)
-- [ ] LuaUserData as a recognized primitive type (currently just a Con)
+- [x] String escape sequences in codegen (\n, \t, \\, \" properly escaped)
+- [x] Eq for tuples (element-wise comparison with type dispatch)
+- [x] LuaTry type family (Lua nil-means-error → Either String a)
 - [ ] Zero-arg LuaIterator (stdinLines) needs IO wrapping to avoid eager eval
 
 ## Can defer (spec says so)
