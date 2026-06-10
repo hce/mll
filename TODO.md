@@ -46,11 +46,10 @@ MATA-LL TODO
 - [x] Qualified import name prefixing (import qualified Data.Tree as T)
 - [x] Polymorphic recursion detection (specialization depth limit)
 - [x] Expression type ascription (expr :: Type)
-- [ ] Orphan instance detection
-- [ ] Process intrinsic declarations properly
-- [ ] when (now feasible with non-strict evaluation)
-- [ ] Strictness analysis: skip __force on known-concrete variables
-      (pattern-matched params, cheap let bindings) to reduce overhead
+- [x] Orphan instance detection
+- [x] Process intrinsic declarations properly
+- [x] when (now feasible with non-strict evaluation)
+- [x] Concrete variable tracking to skip redundant __force calls
 
 ## Can defer (spec says so)
 
