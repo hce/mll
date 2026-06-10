@@ -127,6 +127,9 @@ impl TExpr {
                 original, specialized,
                 args: args.into_iter().map(|a| a.apply_subst(subst)).collect(),
             },
+            TExprKind::Tuple(elems) => TExprKind::Tuple(
+                elems.into_iter().map(|e| e.apply_subst(subst)).collect(),
+            ),
             other => other, // Var, Con, Lit, OpFunc — no nested types
         };
         TExpr { kind, ty }
@@ -142,6 +145,7 @@ impl TPattern {
                 args: args.into_iter().map(|p| p.apply_subst(subst)).collect(),
             },
             TPattern::Paren(p) => TPattern::Paren(Box::new(p.apply_subst(subst))),
+            TPattern::Tuple(ps) => TPattern::Tuple(ps.into_iter().map(|p| p.apply_subst(subst)).collect()),
             other => other, // Wildcard, LitPat
         }
     }
@@ -202,6 +206,7 @@ pub enum TExprKind {
         specialized: String,
         args: Vec<TExpr>,
     },
+    Tuple(Vec<TExpr>),
 }
 
 #[derive(Debug, Clone)]
@@ -222,6 +227,7 @@ pub enum TPattern {
     },
     LitPat(TLiteral),
     Paren(Box<TPattern>),
+    Tuple(Vec<TPattern>),
 }
 
 #[derive(Debug, Clone)]

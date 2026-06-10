@@ -513,6 +513,15 @@ impl CodeGen {
                 }
             }
             TPattern::Paren(inner) => self.collect_pattern_conditions(scrutinee, inner, conditions, bindings),
+            TPattern::Tuple(pats) => {
+                // Tuple fields are at [1], [2], etc. (no tag)
+                for (i, p) in pats.iter().enumerate() {
+                    self.collect_pattern_conditions(
+                        &format!("{}[{}]", scrutinee, i + 1),
+                        p, conditions, bindings,
+                    );
+                }
+            }
         }
     }
 
@@ -805,6 +814,14 @@ impl CodeGen {
                     self.emit(")");
                 }
             }
+            TExprKind::Tuple(elems) => {
+                self.emit("{");
+                for (i, e) in elems.iter().enumerate() {
+                    if i > 0 { self.emit(", "); }
+                    self.gen_expr(e);
+                }
+                self.emit("}");
+            }
         }
     }
 
@@ -901,6 +918,7 @@ fn expr_references_name(expr: &TExpr, name: &str) -> bool {
             expr_references_name(body, name)
         }
         TExprKind::SpecCall { args, .. } => args.iter().any(|a| expr_references_name(a, name)),
+        TExprKind::Tuple(elems) => elems.iter().any(|e| expr_references_name(e, name)),
     }
 }
 
@@ -1064,12 +1082,14 @@ local function hashmap_member(k, m) k = __force(k); m = __force(m); return m[k] 
 local function show_HashMap(m) m = __force(m); local parts = {} for k, v in pairs(m) do parts[#parts+1] = show(k) .. " -> " .. show(v) end table.sort(parts) return "{" .. table.concat(parts, ", ") .. "}" end
 local function hashmap_fromList(xs) xs = __force(xs); local t = {} local cur = xs while cur ~= nil do local pair = __mll_head(cur) t[__force(pair[1])] = __force(pair[2]) cur = __mll_tail(cur) end return t end
 
--- Iterator-to-lazy-list: calls a Lua iterator factory and builds a lazy MLL list
+-- Iterator-to-lazy-list: calls a Lua iterator factory and builds a lazy MLL list.
+-- Single-value iterators produce a flat list; multi-value iterators pack into tuples.
 local function __mll_iter(factory, ...)
     local iter = factory(...)
     local function go()
-        local val = iter()
-        if val == nil then return nil end
+        local vals = {iter()}
+        if vals[1] == nil then return nil end
+        local val = #vals == 1 and vals[1] or vals
         return __mll_lazy_cons(val, go)
     end
     return go()

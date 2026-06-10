@@ -146,6 +146,8 @@ pub enum Pattern {
     LitPat(Literal),
     /// Parenthesized pattern
     Paren(Box<Pattern>),
+    /// Tuple pattern: `(x, y, z)`
+    Tuple(Vec<Pattern>),
 }
 
 /// Expressions.
@@ -201,8 +203,8 @@ pub enum Expr {
     Paren(Box<Expr>),
     /// Operator as function: `(+)`
     OpFunc(String),
-    // String concatenation or other specific ops can be desugared
-    // Backtick infix: desugared to InfixApp
+    /// Tuple expression: `(1, "hello", True)`
+    Tuple(Vec<Expr>),
 }
 
 #[derive(Debug, Clone)]
@@ -261,6 +263,8 @@ pub enum Type {
     LuaIO { lua_name: String, result: Box<Type> },
     /// FFI iterator: `LuaIterator "string.gmatch" String` reduces to `[String]`
     LuaIterator { lua_name: String, result: Box<Type> },
+    /// Tuple type: `(Integer, String, Bool)`
+    Tuple(Vec<Type>),
     /// Typeclass constraint: `Show a =>`
     Constrained {
         constraints: Vec<Constraint>,

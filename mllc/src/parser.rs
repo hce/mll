@@ -921,8 +921,19 @@ impl Parser {
                     return Ok(Type::Unit);
                 }
                 let ty = self.parse_type()?;
-                self.expect(&Token::RightParen)?;
-                Ok(Type::Paren(Box::new(ty)))
+                if self.at(&Token::Comma) {
+                    // Tuple type: (a, b, ...)
+                    let mut elems = vec![ty];
+                    while self.at(&Token::Comma) {
+                        self.advance();
+                        elems.push(self.parse_type()?);
+                    }
+                    self.expect(&Token::RightParen)?;
+                    Ok(Type::Tuple(elems))
+                } else {
+                    self.expect(&Token::RightParen)?;
+                    Ok(Type::Paren(Box::new(ty)))
+                }
             }
             Token::LeftBracket => {
                 self.advance();
@@ -1235,8 +1246,19 @@ impl Parser {
                 self.pos = save_pos;
                 self.current_indent = save_indent;
                 let expr = self.parse_expr()?;
-                self.expect(&Token::RightParen)?;
-                Ok(Expr::Paren(Box::new(expr)))
+                if self.at(&Token::Comma) {
+                    // Tuple expression: (a, b, ...)
+                    let mut elems = vec![expr];
+                    while self.at(&Token::Comma) {
+                        self.advance();
+                        elems.push(self.parse_expr()?);
+                    }
+                    self.expect(&Token::RightParen)?;
+                    Ok(Expr::Tuple(elems))
+                } else {
+                    self.expect(&Token::RightParen)?;
+                    Ok(Expr::Paren(Box::new(expr)))
+                }
             }
             Token::LeftBracket => {
                 self.advance();
@@ -1527,8 +1549,19 @@ impl Parser {
                     });
                 }
                 let inner = self.parse_pattern()?;
-                self.expect(&Token::RightParen)?;
-                Ok(Pattern::Paren(Box::new(inner)))
+                if self.at(&Token::Comma) {
+                    // Tuple pattern: (a, b, ...)
+                    let mut elems = vec![inner];
+                    while self.at(&Token::Comma) {
+                        self.advance();
+                        elems.push(self.parse_pattern()?);
+                    }
+                    self.expect(&Token::RightParen)?;
+                    Ok(Pattern::Tuple(elems))
+                } else {
+                    self.expect(&Token::RightParen)?;
+                    Ok(Pattern::Paren(Box::new(inner)))
+                }
             }
             Token::LeftBracket => {
                 self.advance();

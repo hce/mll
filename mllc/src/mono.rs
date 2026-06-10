@@ -179,6 +179,7 @@ impl Monomorphizer {
             Ty::LuaIO(s, a) => format!("LIO{}_{}", s.name, self.ty_to_suffix(a)),
             Ty::Forall(_, inner) => self.ty_to_suffix(inner),
             Ty::Unit => "Unit".to_string(),
+            Ty::Tuple(elems) => format!("Tup{}", elems.iter().map(|e| self.ty_to_suffix(e)).collect::<Vec<_>>().join("_")),
         }
     }
 
@@ -366,6 +367,7 @@ impl Monomorphizer {
                 }
             }
             TExprKind::Paren(inner) => TExprKind::Paren(Box::new(self.mono_expr(*inner))),
+            TExprKind::Tuple(elems) => TExprKind::Tuple(elems.into_iter().map(|e| self.mono_expr(e)).collect()),
             other => other,
         };
         TExpr { kind, ty }

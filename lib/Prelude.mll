@@ -55,5 +55,12 @@ reverse xs = go [] xs
 when :: Bool -> IO () -> IO ()
 when cond action = if cond then action else putStrLn ""
 
+-- Tuple accessors
+fst :: (a, b) -> a
+fst (x, _) = x
+
+snd :: (a, b) -> b
+snd (_, y) = y
+
 -- head, tail, map, filter, take, zipWith are implemented in the
 -- Lua runtime to support lazy cons cells (infinite lists).

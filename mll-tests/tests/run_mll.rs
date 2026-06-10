@@ -52,6 +52,7 @@ mll_test!(either_ordering, "either_ordering.mll");
 mll_test!(dict, "dict.mll");
 mll_test!(hashmap, "hashmap.mll");
 mll_test!(gadts, "gadts.mll");
+mll_test!(tuples, "tuples.mll");
 
 // Compile-error tests: these SHOULD fail to compile
 #[test]

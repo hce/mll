@@ -44,6 +44,8 @@ pub enum Ty {
     Unit,
     /// Rank-2 forall: forall s. ty (limited to scope variables)
     Forall(TyVar, Box<Ty>),
+    /// Tuple type: (a, b, c)
+    Tuple(Vec<Ty>),
 }
 
 impl Ty {
@@ -97,6 +99,15 @@ impl Ty {
             Ty::Forall(v, inner) => {
                 inner.free_vars().into_iter().filter(|fv| fv != v).collect()
             }
+            Ty::Tuple(elems) => {
+                let mut vars = vec![];
+                for e in elems {
+                    for v in e.free_vars() {
+                        if !vars.contains(&v) { vars.push(v); }
+                    }
+                }
+                vars
+            }
         }
     }
 
@@ -128,6 +139,7 @@ impl Ty {
                 restricted.remove(v);
                 Ty::Forall(v.clone(), Box::new(inner.apply_subst(&restricted)))
             }
+            Ty::Tuple(elems) => Ty::Tuple(elems.iter().map(|e| e.apply_subst(subst)).collect()),
         }
     }
 
@@ -140,6 +152,7 @@ impl Ty {
             Ty::List(a) | Ty::IO(a) => a.occurs(v),
             Ty::LuaIO(s, a) => v == s || a.occurs(v),
             Ty::Forall(_, inner) => inner.occurs(v),
+            Ty::Tuple(elems) => elems.iter().any(|e| e.occurs(v)),
         }
     }
 }
@@ -166,6 +179,14 @@ impl fmt::Display for Ty {
             Ty::LuaIO(s, a) => write!(f, "LuaIO {} {}", s, a),
             Ty::Forall(v, inner) => write!(f, "forall {}. {}", v, inner),
             Ty::Unit => write!(f, "()"),
+            Ty::Tuple(elems) => {
+                write!(f, "(")?;
+                for (i, e) in elems.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{}", e)?;
+                }
+                write!(f, ")")
+            }
         }
     }
 }
@@ -304,6 +325,15 @@ pub fn unify(t1: &Ty, t2: &Ty) -> Result<Subst, TypeErrorKind> {
             let s = unify(&Ty::Var(s1.clone()), &Ty::Var(s2.clone()))?;
             let s2 = unify(&a.apply_subst(&s), &b.apply_subst(&s))?;
             Ok(s.compose(&s2))
+        }
+
+        (Ty::Tuple(a), Ty::Tuple(b)) if a.len() == b.len() => {
+            let mut s = Subst::empty();
+            for (ea, eb) in a.iter().zip(b.iter()) {
+                let si = unify(&ea.apply_subst(&s), &eb.apply_subst(&s))?;
+                s = s.compose(&si);
+            }
+            Ok(s)
         }
 
         _ => Err(TypeErrorKind::Mismatch(t1.clone(), t2.clone())),

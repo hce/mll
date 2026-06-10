@@ -182,6 +182,7 @@ impl Checker {
             Type::LuaIO { result, .. } => Ty::io(self.ast_type_to_ty(result)),
             // LuaIterator "name" T  reduces to  [T]
             Type::LuaIterator { result, .. } => Ty::list(self.ast_type_to_ty(result)),
+            Type::Tuple(elems) => Ty::Tuple(elems.iter().map(|t| self.ast_type_to_ty(t)).collect()),
         }
     }
 
@@ -1447,6 +1448,12 @@ impl Checker {
             Pattern::Paren(inner) => {
                 self.collect_pattern_info(inner, seen, type_name, has_literal);
             }
+            Pattern::Tuple(_) => {
+                // Tuples are always exhaustive (single constructor)
+                if !seen.contains(&"*".to_string()) {
+                    seen.push("*".to_string());
+                }
+            }
         }
     }
 
@@ -1675,6 +1682,21 @@ impl Checker {
                 Ok((TPattern::Constructor { name: name.clone(), args: targs }, subst))
             }
             Pattern::Paren(inner) => self.check_pattern(inner, expected, env),
+            Pattern::Tuple(pats) => {
+                // Expect a Tuple type with matching arity
+                let elem_types: Vec<Ty> = pats.iter().map(|_| self.fresh_var("_t")).collect();
+                let tuple_ty = Ty::Tuple(elem_types.clone());
+                let s = unify(expected, &tuple_ty)?;
+                let mut subst = s;
+                let mut tpats = Vec::new();
+                for (p, et) in pats.iter().zip(elem_types.iter()) {
+                    let et_resolved = et.apply_subst(&subst);
+                    let (tp, ps) = self.check_pattern(p, &et_resolved, env)?;
+                    subst = subst.compose(&ps);
+                    tpats.push(tp);
+                }
+                Ok((TPattern::Tuple(tpats), subst))
+            }
         }
     }
 
@@ -1914,6 +1936,20 @@ impl Checker {
                     |acc, arg| Expr::App(Box::new(acc), Box::new(arg.unwrap().clone())),
                 );
                 self.infer_expr(&desugared, env)
+            }
+            Expr::Tuple(elems) => {
+                let mut telems = Vec::new();
+                let mut elem_types = Vec::new();
+                let mut subst = Subst::empty();
+                for e in elems {
+                    let env2 = env.apply_subst(&subst);
+                    let (te, ty, s) = self.infer_expr(e, &env2)?;
+                    subst = subst.compose(&s);
+                    elem_types.push(ty);
+                    telems.push(te);
+                }
+                let tuple_ty = Ty::Tuple(elem_types);
+                Ok((TExpr::new(TExprKind::Tuple(telems), tuple_ty.clone()), tuple_ty, subst))
             }
         }
     }
