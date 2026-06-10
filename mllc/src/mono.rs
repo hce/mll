@@ -122,23 +122,33 @@ impl Monomorphizer {
     }
 
     /// Check if a parameterized instance exists (e.g., Show [a] for Show [Integer])
-    fn has_parameterized_instance(&self, method: &str, concrete_ty: &Ty) -> bool {
+    /// Find a parameterized instance for a method on a concrete type.
+    /// E.g., find show_PureMap for show on PureMap String Integer.
+    fn resolve_parameterized_instance(&self, method: &str, concrete_ty: &Ty) -> Option<String> {
         let base = match concrete_ty {
             Ty::List(_) => "[]",
             Ty::App(f, _) => {
-                // Unwrap nested App to find the base constructor: App(App(Con("HashMap"), _), _) -> "HashMap"
                 let mut head = f.as_ref();
                 loop {
                     match head {
                         Ty::Con(name) => break name.as_str(),
                         Ty::App(inner, _) => head = inner.as_ref(),
-                        _ => return false,
+                        _ => return None,
                     }
                 }
             }
-            _ => return false,
+            _ => return None,
         };
-        self.instance_methods.contains_key(&(method.to_string(), base.to_string()))
+        // Look for exact base or parameterized key (e.g. "PureMap k v")
+        if let Some(mangled) = self.instance_methods.get(&(method.to_string(), base.to_string())) {
+            return Some(mangled.clone());
+        }
+        for ((m, t), mangled) in &self.instance_methods {
+            if m == method && t.starts_with(&format!("{} ", base)) {
+                return Some(mangled.clone());
+            }
+        }
+        None
     }
 
     fn is_polymorphic(&self, ty: &Ty) -> bool {
@@ -205,7 +215,9 @@ impl Monomorphizer {
                         let key = (name.clone(), ty_str.clone());
                         if let Some(mangled) = self.instance_methods.get(&key).cloned() {
                             return TExpr { kind: TExprKind::Var(mangled), ty };
-                        } else if !self.has_parameterized_instance(name, &arg_ty) {
+                        } else if let Some(mangled) = self.resolve_parameterized_instance(name, &arg_ty) {
+                            return TExpr { kind: TExprKind::Var(mangled), ty };
+                        } else {
                             self.errors.push(format!(
                                 "No instance for '{}' on type '{}'", name, ty_str
                             ));
@@ -270,7 +282,9 @@ impl Monomorphizer {
                         if !self.is_polymorphic(arg_ty) {
                             let ty_str = format!("{}", arg_ty);
                             let key = (fname.clone(), ty_str);
-                            if let Some(mangled) = self.instance_methods.get(&key).cloned() {
+                            let resolved = self.instance_methods.get(&key).cloned()
+                                .or_else(|| self.resolve_parameterized_instance(fname, arg_ty));
+                            if let Some(mangled) = resolved {
                                 let mono_arg = self.mono_expr(*arg);
                                 return TExpr {
                                     kind: TExprKind::App(
@@ -309,7 +323,7 @@ impl Monomorphizer {
                             ),
                             ty,
                         };
-                    } else if !self.has_parameterized_instance(&op, &lhs.ty) {
+                    } else if self.resolve_parameterized_instance(&op, &lhs.ty).is_none() {
                         self.errors.push(format!(
                             "No instance for '{}' on type '{}'", op, ty_str
                         ));

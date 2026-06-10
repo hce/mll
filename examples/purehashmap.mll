@@ -7,6 +7,7 @@
 
 -- Reuse AVL tree as the bucket index
 data Tree v = TEmpty | TNode Integer Integer v (Tree v) (Tree v)
+    deriving Show
 
 theight :: Tree v -> Integer
 theight TEmpty = 0
@@ -52,6 +53,7 @@ tlookup k (TNode _ nk nv left right)
 
 -- Association list for collision buckets
 data Bucket k v = BEmpty | BCons k v (Bucket k v)
+    deriving Show
 
 blookup :: k -> Bucket k v -> Maybe v
 blookup _ BEmpty = Nothing
@@ -77,6 +79,7 @@ bsize (BCons _ _ rest) = 1 + bsize rest
 
 -- Hash map: Tree of buckets
 data PureMap k v = PureMap (Tree (Bucket k v))
+    deriving Show
 
 -- String hash via Lua (MLL strings aren't char lists)
 hashStr :: String -> LuaPure "__mll_hashstr" Integer
@@ -131,3 +134,5 @@ main = do
     let m2 = pmInsert "alice" 31 m
     putStrLn (show (fromMaybe 0 (pmLookup "alice" m2)))
     putStrLn (show (pmSize m2))
+    -- Show the tree structure
+    putStrLn (show m)
