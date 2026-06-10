@@ -5,6 +5,18 @@ Modest Attempt at Typesystem Augmenting the Lua Language (mata-ll)
 |-----------|---------------|
 | <pre>fib :: [Integer]<br>fib = 1:1:zipWith (+) fib (tail fib)<br><br>export fibonacci :: Integer -> [Integer]<br>fibonacci = flip take fib</pre> | <pre>local fib = require "fib"<br><br>local fibs = fib.fibonacci(8)<br>for i, n in ipairs(fibs) do<br>    print(i, n)<br>end</pre> |
 
+```haskell
+-- random.mll: two lines of FFI, the rest is Haskell
+rr :: LuaIO "math.random" Number
+rr2 :: Integer -> Integer -> LuaIO "math.random" Integer
+
+main :: IO ()
+main = do
+    randNum <- rr
+    putStrLn $ "A number between 0.0 and 1.0: " ++ show randNum
+    randNum2 <- rr2 23 42
+    putStrLn $ "An integer between 23 and 42: " ++ show randNum2
+```
 
 ## Project goals
 
