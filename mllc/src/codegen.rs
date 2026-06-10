@@ -730,7 +730,8 @@ fn sanitize_name(name: &str) -> String {
         "hmKeys" => "hashmap_keys".to_string(),
         "hmValues" => "hashmap_values".to_string(),
         "hmMember" => "hashmap_member".to_string(),
-        _ => name.replace('\'', "_prime").replace('-', "_"),
+        _ => name.replace('\'', "_prime").replace('-', "_")
+                 .replace('[', "List_").replace(']', ""),
     }
 }
 
