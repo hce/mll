@@ -979,8 +979,8 @@ local function show(x)
             local is_list = true
             while cur ~= nil do
                 if type(cur) ~= "table" then is_list = false; break end
-                parts[#parts + 1] = show(cur[1])
-                cur = cur[2]
+                parts[#parts + 1] = show(__force(cur[1]))
+                cur = __mll_tail(cur)
             end
             if is_list then return "[" .. table.concat(parts, ", ") .. "]" end
         end
