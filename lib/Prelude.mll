@@ -50,5 +50,10 @@ reverse xs = go [] xs
         go acc [] = acc
         go acc (x:rest) = go (x:acc) rest
 
+-- Conditional execution (non-strict evaluation makes this safe:
+-- the action is thunked and only forced when the condition is true)
+when :: Bool -> IO () -> IO ()
+when cond action = if cond then action else putStrLn ""
+
 -- head, tail, map, filter, take, zipWith are implemented in the
 -- Lua runtime to support lazy cons cells (infinite lists).
