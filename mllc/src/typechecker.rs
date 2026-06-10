@@ -352,7 +352,9 @@ impl Checker {
             ("not", vec![], Ty::arrow(Ty::Con("Bool".into()), Ty::Con("Bool".into()))),
             ("error", vec![a.clone()], Ty::arrow(Ty::Con("String".into()), ta.clone())),
             ("otherwise", vec![], Ty::Con("Bool".into())),
-            ("pure", vec![], Ty::io(Ty::Unit)),
+            ("pure", vec![a.clone()], Ty::arrow(ta.clone(), Ty::io(ta.clone()))),
+            ("return", vec![a.clone()], Ty::arrow(ta.clone(), Ty::io(ta.clone()))),
+            (">>=", vec![a.clone(), b.clone()], Ty::fun(&[Ty::io(ta.clone()), Ty::arrow(ta.clone(), Ty::io(tb.clone()))], Ty::io(tb.clone()))),
             ("getArgs", vec![], Ty::io(Ty::list(Ty::Con("String".into())))),
             ("exit", vec![], Ty::arrow(Ty::Con("ExitValue".into()), Ty::io(Ty::Unit))),
         ];
@@ -449,6 +451,18 @@ impl Checker {
                 Ty::app(Ty::Con("LuaFunction".into()), Ty::Var(s.clone())),
                 ta.clone(),
             ),
+        });
+
+        // Built-in Monad typeclass (simplified: IO is the only instance)
+        // >>=  :: IO a -> (a -> IO b) -> IO b
+        // pure :: a -> IO a
+        self.classes.insert("Monad".to_string(), ClassInfo {
+            name: "Monad".to_string(),
+            type_var: "m".to_string(),
+            superclasses: vec![],
+            methods: vec![
+                (">>=".to_string(), Ty::fun(&[Ty::io(ta.clone()), Ty::arrow(ta.clone(), Ty::io(tb.clone()))], Ty::io(tb.clone()))),
+            ],
         });
 
         // Built-in Show typeclass

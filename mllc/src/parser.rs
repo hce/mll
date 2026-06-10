@@ -1564,6 +1564,8 @@ impl Parser {
 /// Based on Haskell defaults.
 fn operator_precedence(op: &str) -> (u8, u8) {
     match op {
+        ">>=" => (1, 0), // right-associative, lowest (like $)
+        ">>" => (1, 0),
         "$" => (1, 0),  // right-associative, lowest precedence
         "||" => (2, 3),
         "&&" => (3, 4),

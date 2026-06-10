@@ -24,8 +24,8 @@ MATA-LL TODO
 
 - [x] Eq as a proper typeclass gating == and /=
 - [x] Ord as a proper typeclass gating <, >, <=, >=
-- [ ] Functor / Applicative / Monad hierarchy (spec lines 370-388)
-- [ ] Desugar do-notation through >>= instead of hardwiring
+- [x] Monad typeclass and >>= operator
+- [x] Desugar do-notation through >>= instead of hardwiring
 
 ## Missing types and values
 

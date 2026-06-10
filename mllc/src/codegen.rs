@@ -588,6 +588,14 @@ impl CodeGen {
                         self.gen_expr(lhs); self.emit("("); self.gen_expr(rhs); self.emit(")");
                         return;
                     }
+                    ">>=" => {
+                        // IO bind: lhs >>= rhs  =>  rhs(lhs)
+                        // lhs is an IO action (evaluated eagerly, returns result)
+                        // rhs is a function (a -> IO b)
+                        self.emit("("); self.gen_expr(rhs); self.emit(")(");
+                        self.gen_expr(lhs); self.emit(")");
+                        return;
+                    }
                     "." => {
                         self.emit("(function(_x) return "); self.gen_expr(lhs);
                         self.emit("("); self.gen_expr(rhs); self.emit("(_x)) end)");
@@ -751,6 +759,7 @@ impl CodeGen {
 fn sanitize_name(name: &str) -> String {
     match name {
         "main" => "__run".to_string(),
+        "return" => "return_".to_string(),
         "hmEmpty" => "hashmap_empty".to_string(),
         "hmInsert" => "hashmap_insert".to_string(),
         "hmLookup" => "hashmap_lookup".to_string(),
@@ -860,7 +869,8 @@ end
 local function error_(msg) error(msg) end
 local function max(a, b) return math.max(a, b) end
 local function min(a, b) return math.min(a, b) end
-local function pure() end
+local function pure(x) return x end
+local function return_(x) return x end
 local function Just(x) return x end
 local Nothing = nil
 local function show_Integer(x) return show(x) end

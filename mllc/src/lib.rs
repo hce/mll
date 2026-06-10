@@ -2,6 +2,7 @@
 
 pub mod ast;
 pub mod codegen;
+pub mod desugar;
 pub mod lexer;
 pub mod modules;
 pub mod mono;
@@ -75,11 +76,14 @@ pub fn compile(source: &str, source_dir: &Path, lib_paths: &[&Path]) -> Result<C
 
     // Merge prelude declarations (prepend before user declarations)
     let prelude_decls = parse_prelude()?;
-    let module = ast::Module {
+    let mut module = ast::Module {
         decls: prelude_decls.into_iter()
             .chain(module.decls.into_iter())
             .collect(),
     };
+
+    // Desugar do-notation to >>= chains
+    desugar::desugar_module(&mut module);
 
     // Type check
     let mut checker = typechecker::Checker::new();
