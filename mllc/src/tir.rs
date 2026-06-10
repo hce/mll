@@ -122,15 +122,6 @@ impl TExpr {
                 }).collect(),
                 body: Box::new(body.apply_subst(subst)),
             },
-            TExprKind::Do(stmts) => TExprKind::Do(stmts.into_iter().map(|s| match s {
-                TDoStmt::Bind { name, ty, expr } => TDoStmt::Bind {
-                    name, ty: ty.apply_subst(subst), expr: expr.apply_subst(subst),
-                },
-                TDoStmt::DoLet { name, ty, expr } => TDoStmt::DoLet {
-                    name, ty: ty.apply_subst(subst), expr: expr.apply_subst(subst),
-                },
-                TDoStmt::Expr(e) => TDoStmt::Expr(e.apply_subst(subst)),
-            }).collect()),
             TExprKind::Paren(e) => TExprKind::Paren(Box::new(e.apply_subst(subst))),
             TExprKind::SpecCall { original, specialized, args } => TExprKind::SpecCall {
                 original, specialized,
@@ -202,7 +193,6 @@ pub enum TExprKind {
         binds: Vec<TLocalDef>,
         body: Box<TExpr>,
     },
-    Do(Vec<TDoStmt>),
     Paren(Box<TExpr>),
     OpFunc(String),
     /// A call to a specific monomorphized specialization.
@@ -221,12 +211,6 @@ pub struct TCaseBranch {
     pub body: TExpr,
 }
 
-#[derive(Debug, Clone)]
-pub enum TDoStmt {
-    Bind { name: String, ty: Ty, expr: TExpr },
-    Expr(TExpr),
-    DoLet { name: String, ty: Ty, expr: TExpr },
-}
 
 #[derive(Debug, Clone)]
 pub enum TPattern {

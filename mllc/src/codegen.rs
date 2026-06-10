@@ -194,20 +194,15 @@ impl CodeGen {
             // Check if this is a value binding (non-function type) or a
             // zero-arg function (IO action / thunk)
             let is_io_action = matches!(&func.ty, Ty::IO(_) | Ty::LuaIO(_, _) | Ty::Forall(_, _));
-            let is_do_block = matches!(&clauses[0].body.kind, TExprKind::Do(_));
 
-            if is_io_action || is_do_block {
+            if is_io_action {
                 // Wrap in a function (IO action, needs to be called)
                 self.emit_indent();
                 self.emit(&self.fn_decl(&lua_name, ""));
                 self.emit("\n");
                 self.indent += 1;
                 self.gen_where_binds(&clauses[0].where_binds);
-                if is_do_block {
-                    self.gen_expr(&clauses[0].body);
-                } else {
-                    self.emit_indent(); self.emit("return "); self.gen_expr(&clauses[0].body); self.emit("\n");
-                }
+                self.emit_indent(); self.emit("return "); self.gen_expr(&clauses[0].body); self.emit("\n");
                 self.indent -= 1;
                 self.emit_line("end");
             } else if expr_references_name(&clauses[0].body, &func.name) {
@@ -247,11 +242,7 @@ impl CodeGen {
                     }
                 }
                 self.gen_where_binds(&clause.where_binds);
-                if matches!(&clause.body.kind, TExprKind::Do(_)) {
-                    self.gen_expr(&clause.body);
-                } else {
-                    self.emit_indent(); self.emit("return "); self.gen_expr(&clause.body); self.emit("\n");
-                }
+                self.emit_indent(); self.emit("return "); self.gen_expr(&clause.body); self.emit("\n");
             } else {
                 self.gen_where_binds(&clause.where_binds);
                 self.gen_pattern_match(&params, clauses);
@@ -405,11 +396,7 @@ impl CodeGen {
                         self.emit_line(&format!("local {} = {}", var, val));
                     }
                     self.gen_where_binds(&clause.where_binds);
-                    if matches!(&clause.body.kind, TExprKind::Do(_)) {
-                        self.gen_expr(&clause.body);
-                    } else {
-                        self.emit_indent(); self.emit("return "); self.gen_expr(&clause.body); self.emit("\n");
-                    }
+                    self.emit_indent(); self.emit("return "); self.gen_expr(&clause.body); self.emit("\n");
                     if i > 0 { self.indent -= 1; self.emit_line("end"); }
                     return;
                 }
@@ -421,11 +408,7 @@ impl CodeGen {
                     self.emit_line(&format!("local {} = {}", var, val));
                 }
                 self.gen_where_binds(&clause.where_binds);
-                if matches!(&clause.body.kind, TExprKind::Do(_)) {
-                    self.gen_expr(&clause.body);
-                } else {
-                    self.emit_indent(); self.emit("return "); self.gen_expr(&clause.body); self.emit("\n");
-                }
+                self.emit_indent(); self.emit("return "); self.gen_expr(&clause.body); self.emit("\n");
                 self.indent -= 1;
             }
         }
@@ -661,27 +644,6 @@ impl CodeGen {
                 self.emit_indent(); self.emit("return "); self.gen_expr(body); self.emit("\n");
                 self.indent -= 1; self.emit_indent(); self.emit("end)()");
             }
-            TExprKind::Do(stmts) => {
-                for (i, stmt) in stmts.iter().enumerate() {
-                    match stmt {
-                        TDoStmt::Bind { name, expr, .. } => {
-                            self.emit_indent(); self.emit(&format!("local {} = ", name));
-                            self.gen_expr(expr); self.emit("\n");
-                        }
-                        TDoStmt::DoLet { name, expr, .. } => {
-                            self.emit_indent(); self.emit(&format!("local {} = ", name));
-                            self.gen_expr(expr); self.emit("\n");
-                        }
-                        TDoStmt::Expr(expr) => {
-                            if i == stmts.len() - 1 {
-                                self.emit_indent(); self.emit("return "); self.gen_expr(expr); self.emit("\n");
-                            } else {
-                                self.emit_indent(); self.gen_expr(expr); self.emit("\n");
-                            }
-                        }
-                    }
-                }
-            }
             TExprKind::Lambda { params, body } => {
                 let ps: Vec<&str> = params.iter().map(|(s, _)| s.as_str()).collect();
                 self.emit(&format!("function({})\n", ps.join(", ")));
@@ -796,10 +758,6 @@ fn expr_references_name(expr: &TExpr, name: &str) -> bool {
             binds.iter().any(|b| expr_references_name(&b.body, name)) ||
             expr_references_name(body, name)
         }
-        TExprKind::Do(stmts) => stmts.iter().any(|s| match s {
-            TDoStmt::Bind { expr, .. } | TDoStmt::DoLet { expr, .. } => expr_references_name(expr, name),
-            TDoStmt::Expr(e) => expr_references_name(e, name),
-        }),
         TExprKind::SpecCall { args, .. } => args.iter().any(|a| expr_references_name(a, name)),
     }
 }

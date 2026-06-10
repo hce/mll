@@ -1745,7 +1745,7 @@ impl Checker {
                     body_ty, subst.compose(&s),
                 ))
             }
-            Expr::Do(stmts) => self.infer_do_typed(stmts, env),
+            Expr::Do(_) => unreachable!("Do should be desugared to >>= before type checking"),
             Expr::Paren(inner) => {
                 let (te, ty, s) = self.infer_expr(inner, env)?;
                 Ok((TExpr::new(TExprKind::Paren(Box::new(te)), ty.clone()), ty, s))
@@ -1820,62 +1820,6 @@ impl Checker {
         let s = unify(&inferred.apply_subst(&subst), &expected.apply_subst(&subst))?;
         let final_ty = inferred.apply_subst(&subst).apply_subst(&s);
         Ok((TExpr { kind: te.kind, ty: final_ty }, subst.compose(&s)))
-    }
-
-    fn infer_do_typed(&mut self, stmts: &[DoStmt], env: &TypeEnv) -> Result<(TExpr, Ty, Subst), TypeErrorKind> {
-        let mut local_env = env.clone();
-        let mut subst = Subst::empty();
-        let mut last_ty = Ty::io(Ty::Unit);
-        let mut tstmts = Vec::new();
-
-        for (i, stmt) in stmts.iter().enumerate() {
-            let is_last = i == stmts.len() - 1;
-            match stmt {
-                DoStmt::Bind { name, expr } => {
-                    let (te, expr_ty, s) = self.infer_expr(expr, &local_env)?;
-                    subst = subst.compose(&s);
-                    let inner_ty = self.fresh_var("_d");
-                    let resolved_ty = expr_ty.apply_subst(&subst);
-                    // Try IO first, then LuaIO
-                    let s2 = unify(&resolved_ty, &Ty::io(inner_ty.clone()))
-                        .or_else(|_| {
-                            let scope = self.fresh_var("_s");
-                            if let Ty::Var(sv) = &scope {
-                                unify(&resolved_ty, &Ty::lua_io(sv.clone(), inner_ty.clone()))
-                            } else {
-                                unify(&resolved_ty, &Ty::io(inner_ty.clone()))
-                            }
-                        })?;
-                    subst = subst.compose(&s2);
-                    let bound_ty = inner_ty.apply_subst(&subst);
-                    local_env = local_env.apply_subst(&subst);
-                    local_env.insert(name.clone(), Scheme::mono(bound_ty.clone()));
-                    tstmts.push(TDoStmt::Bind { name: name.clone(), ty: bound_ty, expr: te });
-                }
-                DoStmt::DoLet { name, expr } => {
-                    let (te, expr_ty, s) = self.infer_expr(expr, &local_env)?;
-                    subst = subst.compose(&s);
-                    let ty = expr_ty.apply_subst(&subst);
-                    local_env = local_env.apply_subst(&subst);
-                    local_env.insert(name.clone(), Scheme::mono(ty.clone()));
-                    tstmts.push(TDoStmt::DoLet { name: name.clone(), ty: ty, expr: te });
-                }
-                DoStmt::Expr(expr) => {
-                    let (te, expr_ty, s) = self.infer_expr(expr, &local_env)?;
-                    subst = subst.compose(&s);
-                    last_ty = expr_ty.apply_subst(&subst);
-                    if !is_last {
-                        let discard = self.fresh_var("_d");
-                        let s2 = unify(&last_ty, &Ty::io(discard))?;
-                        subst = subst.compose(&s2);
-                    }
-                    local_env = local_env.apply_subst(&subst);
-                    tstmts.push(TDoStmt::Expr(te));
-                }
-            }
-        }
-
-        Ok((TExpr::new(TExprKind::Do(tstmts), last_ty.clone()), last_ty, subst))
     }
 
     /// Generate a TIR function for an FFI declaration.

@@ -365,13 +365,6 @@ impl Monomorphizer {
                     body: Box::new(self.mono_expr(*body)),
                 }
             }
-            TExprKind::Do(stmts) => {
-                TExprKind::Do(stmts.into_iter().map(|s| match s {
-                    TDoStmt::Bind { name, ty, expr } => TDoStmt::Bind { name, ty, expr: self.mono_expr(expr) },
-                    TDoStmt::DoLet { name, ty, expr } => TDoStmt::DoLet { name, ty, expr: self.mono_expr(expr) },
-                    TDoStmt::Expr(e) => TDoStmt::Expr(self.mono_expr(e)),
-                }).collect())
-            }
             TExprKind::Paren(inner) => TExprKind::Paren(Box::new(self.mono_expr(*inner))),
             other => other,
         };
