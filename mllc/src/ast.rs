@@ -77,6 +77,19 @@ pub enum Decl {
         module_path: Vec<String>,
         items: ImportItems,
     },
+    /// Fixity declaration: `infixl 6 +` or `infixr 5 :`
+    FixityDecl {
+        assoc: Assoc,
+        prec: u8,
+        op: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Assoc {
+    Left,
+    Right,
+    None,
 }
 
 #[derive(Debug, Clone)]

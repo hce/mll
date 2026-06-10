@@ -713,7 +713,13 @@ impl CodeGen {
                     }
                     other => other,
                 };
-                if !is_builtin_op(op) && op.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                if is_builtin_op(op) {
+                    // Lua-native operator: emit as infix
+                    self.emit("("); self.gen_expr(lhs);
+                    self.emit(&format!(" {} ", lua_op));
+                    self.gen_expr(rhs); self.emit(")");
+                } else {
+                    // User-defined or non-Lua operator: emit as function call
                     match op.as_str() {
                         "mod" => { self.emit("("); self.gen_expr(lhs); self.emit(" % "); self.gen_expr(rhs); self.emit(")"); }
                         "div" => { self.emit("("); self.gen_expr(lhs); self.emit(" // "); self.gen_expr(rhs); self.emit(")"); }
@@ -722,10 +728,6 @@ impl CodeGen {
                             self.gen_expr(lhs); self.emit(", "); self.gen_expr(rhs); self.emit(")");
                         }
                     }
-                } else {
-                    self.emit("("); self.gen_expr(lhs);
-                    self.emit(&format!(" {} ", lua_op));
-                    self.gen_expr(rhs); self.emit(")");
                 }
             }
             TExprKind::Negate(inner) => { self.emit("(-"); self.gen_expr(inner); self.emit(")"); }
@@ -981,8 +983,32 @@ fn sanitize_name(name: &str) -> String {
         "hmKeys" => "hashmap_keys".to_string(),
         "hmValues" => "hashmap_values".to_string(),
         "hmMember" => "hashmap_member".to_string(),
-        _ => name.replace('\'', "_prime").replace('-', "_")
-                 .replace('[', "List_").replace(']', ""),
+        _ => {
+            let mut s = String::new();
+            for c in name.chars() {
+                match c {
+                    '\'' => s.push_str("_prime"),
+                    '<' => s.push_str("_lt_"),
+                    '>' => s.push_str("_gt_"),
+                    '+' => s.push_str("_plus_"),
+                    '-' => s.push('_'),
+                    '*' => s.push_str("_star_"),
+                    '/' => s.push_str("_slash_"),
+                    '!' => s.push_str("_bang_"),
+                    '?' => s.push_str("_q_"),
+                    '|' => s.push_str("_pipe_"),
+                    '&' => s.push_str("_amp_"),
+                    '=' => s.push_str("_eq_"),
+                    '^' => s.push_str("_caret_"),
+                    '~' => s.push_str("_tilde_"),
+                    '@' => s.push_str("_at_"),
+                    '[' => s.push_str("List_"),
+                    ']' => {},
+                    _ => s.push(c),
+                }
+            }
+            s
+        }
     }
 }
 

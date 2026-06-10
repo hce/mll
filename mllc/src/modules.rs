@@ -178,5 +178,6 @@ fn decl_name(decl: &Decl) -> Option<String> {
         Decl::ExportSig { name, .. } => Some(name.clone()),
         Decl::TypeFamily { name, .. } => Some(name.clone()),
         Decl::Import { .. } => None,
+        Decl::FixityDecl { .. } => None,
     }
 }

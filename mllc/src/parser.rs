@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use crate::ast::*;
 use crate::lexer::{Located, Token};
 
@@ -10,6 +11,8 @@ pub struct Parser {
     current_indent: usize,
     /// Minimum indentation for current expression context
     expr_min_indent: usize,
+    /// User-defined operator fixity: op -> (assoc, precedence)
+    fixities: HashMap<String, (Assoc, u8)>,
 }
 
 impl Parser {
@@ -20,6 +23,7 @@ impl Parser {
             indent_stack: vec![0],
             current_indent: 0,
             expr_min_indent: 0,
+            fixities: HashMap::new(),
         }
     }
 
@@ -124,6 +128,7 @@ impl Parser {
             Token::KwType => self.parse_type_family_decl(),
             Token::Intrinsic => self.parse_intrinsic_decl(),
             Token::Export => self.parse_export_decl(),
+            Token::Infixl | Token::Infixr | Token::Infix => self.parse_fixity_decl(),
             Token::Ident(_) => self.parse_value_decl(),
             Token::LeftParen => self.parse_operator_decl(),
             _ => {
@@ -602,6 +607,40 @@ impl Parser {
         Ok(vec![])
     }
 
+    /// Look up operator precedence: user-defined fixity overrides defaults.
+    fn operator_precedence(&self, op: &str) -> (u8, u8) {
+        if let Some((assoc, prec)) = self.fixities.get(op) {
+            assoc_prec_to_binding(*assoc, *prec)
+        } else {
+            default_operator_precedence(op)
+        }
+    }
+
+    /// Parse a fixity declaration: `infixl 6 +` or `infixr 5 :`
+    fn parse_fixity_decl(&mut self) -> Result<Vec<Decl>, String> {
+        let assoc = match self.peek() {
+            Token::Infixl => { self.advance(); Assoc::Left }
+            Token::Infixr => { self.advance(); Assoc::Right }
+            Token::Infix => { self.advance(); Assoc::None }
+            _ => unreachable!(),
+        };
+        let prec = match self.peek() {
+            Token::IntLit(n) => {
+                let p = *n as u8;
+                self.advance();
+                p
+            }
+            _ => return Err("Expected precedence level (0-9) after infixl/infixr/infix".into()),
+        };
+        let op = match self.peek().clone() {
+            Token::Operator(s) => { self.advance(); s }
+            Token::Ident(s) => { self.advance(); s } // backtick operators
+            _ => return Err("Expected operator after fixity precedence".into()),
+        };
+        self.fixities.insert(op.clone(), (assoc, prec));
+        Ok(vec![Decl::FixityDecl { assoc, prec, op }])
+    }
+
     /// Parse a value declaration (type signature or function definition).
     fn parse_value_decl(&mut self) -> Result<Vec<Decl>, String> {
         let name = self.expect_ident()?;
@@ -1014,7 +1053,7 @@ impl Parser {
             // Check for operator
             match self.peek().clone() {
                 Token::Operator(ref op) => {
-                    let (lp, rp) = operator_precedence(op);
+                    let (lp, rp) = self.operator_precedence(op);
                     if lp < min_prec {
                         break;
                     }
@@ -1032,8 +1071,10 @@ impl Parser {
                     self.advance();
                     let func = self.expect_ident()?;
                     self.expect(&Token::Backtick)?;
+                    let (lp, rp) = self.operator_precedence(&func);
+                    if lp < min_prec { break; }
                     self.skip_newlines_and_indent();
-                    let rhs = self.parse_expr_infix(5)?;
+                    let rhs = self.parse_expr_infix(rp)?;
                     lhs = Expr::InfixApp {
                         op: func,
                         lhs: Box::new(lhs),
@@ -1656,21 +1697,30 @@ impl Parser {
 
 /// Operator precedence (left binding power, right binding power).
 /// Based on Haskell defaults.
-fn operator_precedence(op: &str) -> (u8, u8) {
+/// Convert (Assoc, prec 0-9) to Pratt binding powers (lp, rp).
+fn assoc_prec_to_binding(assoc: Assoc, prec: u8) -> (u8, u8) {
+    let base = prec * 2;
+    match assoc {
+        Assoc::Left => (base, base + 1),
+        Assoc::Right => (base + 1, base),
+        Assoc::None => (base, base + 1), // like left, but could error on chaining
+    }
+}
+
+fn default_operator_precedence(op: &str) -> (u8, u8) {
     match op {
-        ">>=" => (1, 0), // right-associative, lowest (like $)
-        ">>" => (1, 0),
-        "$" => (1, 0),  // right-associative, lowest precedence
-        "||" => (2, 3),
-        "&&" => (3, 4),
-        "==" | "/=" | "<" | ">" | "<=" | ">=" => (4, 5),
-        ":" => (5, 4),  // right-associative cons
-        "++" => (5, 6),
-        "+" | "-" => (6, 7),
-        "*" | "/" => (7, 8),
-        "^" => (9, 8), // right-associative
-        "." => (9, 10),
-        _ => (9, 10), // default high precedence
+        ">>=" | ">>" => assoc_prec_to_binding(Assoc::Right, 1),
+        "$" => assoc_prec_to_binding(Assoc::Right, 0),
+        "||" => assoc_prec_to_binding(Assoc::Right, 2),
+        "&&" => assoc_prec_to_binding(Assoc::Right, 3),
+        "==" | "/=" | "<" | ">" | "<=" | ">=" => assoc_prec_to_binding(Assoc::None, 4),
+        ":" => assoc_prec_to_binding(Assoc::Right, 5),
+        "++" => assoc_prec_to_binding(Assoc::Right, 5),
+        "+" | "-" => assoc_prec_to_binding(Assoc::Left, 6),
+        "*" | "/" => assoc_prec_to_binding(Assoc::Left, 7),
+        "^" => assoc_prec_to_binding(Assoc::Right, 8),
+        "." => assoc_prec_to_binding(Assoc::Right, 9),
+        _ => assoc_prec_to_binding(Assoc::Left, 9), // default high precedence
     }
 }
 

@@ -35,6 +35,9 @@ pub enum Token {
     KwType,
     Deriving,
     Family,
+    Infixl,
+    Infixr,
+    Infix,
 
     // Symbols
     Arrow,       // ->
@@ -312,6 +315,9 @@ pub fn lex(source: &str) -> Result<Vec<Located>, String> {
                 "type" => Token::KwType,
                 "deriving" => Token::Deriving,
                 "family" => Token::Family,
+                "infixl" => Token::Infixl,
+                "infixr" => Token::Infixr,
+                "infix" => Token::Infix,
                 "True" => Token::UpperIdent("True".to_string()),
                 "False" => Token::UpperIdent("False".to_string()),
                 "_" => Token::Underscore,
