@@ -259,6 +259,8 @@ pub enum Type {
     LuaPure { lua_name: String, result: Box<Type> },
     /// FFI effectful call: `LuaIO "math.random" Number` reduces to `IO Number`
     LuaIO { lua_name: String, result: Box<Type> },
+    /// FFI iterator: `LuaIterator "string.gmatch" String` reduces to `[String]`
+    LuaIterator { lua_name: String, result: Box<Type> },
     /// Typeclass constraint: `Show a =>`
     Constrained {
         constraints: Vec<Constraint>,

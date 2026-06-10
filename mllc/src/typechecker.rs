@@ -180,6 +180,8 @@ impl Checker {
             Type::LuaPure { result, .. } => self.ast_type_to_ty(result),
             // LuaIO "name" T  reduces to  IO T
             Type::LuaIO { result, .. } => Ty::io(self.ast_type_to_ty(result)),
+            // LuaIterator "name" T  reduces to  [T]
+            Type::LuaIterator { result, .. } => Ty::list(self.ast_type_to_ty(result)),
         }
     }
 
@@ -841,7 +843,7 @@ impl Checker {
 
         // Pass 3: collect type signatures and FFI info
         let mut sigs: HashMap<String, Ty> = HashMap::new();
-        let mut ffi_info: HashMap<String, (String, bool)> = HashMap::new(); // name -> (lua_name, is_io)
+        let mut ffi_info: HashMap<String, (String, FfiKind)> = HashMap::new();
         for decl in &module.decls {
             if let Decl::TypeSig { name, ty } = decl {
                 // Kind-check the type signature
@@ -887,10 +889,10 @@ impl Checker {
         let mut functions = Vec::new();
         let mut has_main = false;
 
-        for (name, (lua_name, is_io)) in &ffi_info {
+        for (name, (lua_name, ffi_kind)) in &ffi_info {
             if !defined_fns.contains(name) {
                 if let Some(ty) = sigs.get(name) {
-                    let ffi_fn = self.generate_ffi_function(name, lua_name, *is_io, ty);
+                    let ffi_fn = self.generate_ffi_function(name, lua_name, *ffi_kind, ty);
                     functions.push(ffi_fn);
                     // Register in env
                     let scheme = self.generalize(&self.env.clone(), ty);
@@ -1925,7 +1927,7 @@ impl Checker {
 
     /// Generate a TIR function for an FFI declaration.
     /// The function body calls the named Lua function directly.
-    fn generate_ffi_function(&mut self, name: &str, lua_name: &str, is_io: bool, ty: &Ty) -> TFunction {
+    fn generate_ffi_function(&mut self, name: &str, lua_name: &str, ffi_kind: FfiKind, ty: &Ty) -> TFunction {
         // Count argument types from the function type
         let mut arg_types = Vec::new();
         let mut current = ty.clone();
@@ -1950,15 +1952,20 @@ impl Checker {
             .collect();
 
         // Build the call expression: lua_func(_ffi0, _ffi1, ...)
-        // We use a special FFI call node
         let call_args: Vec<TExpr> = params.iter()
             .map(|(n, t)| TExpr::new(TExprKind::Var(n.clone()), t.clone()))
             .collect();
 
+        // For iterators, call __mll_iter(lua_factory, args...)
+        let specialized = match ffi_kind {
+            FfiKind::Iterator => format!("__mll_iter:{}", lua_name),
+            _ => lua_name.to_string(),
+        };
+
         let body = TExpr::new(
             TExprKind::SpecCall {
                 original: name.to_string(),
-                specialized: lua_name.to_string(),
+                specialized,
                 args: call_args,
             },
             ret_ty.clone(),
@@ -1994,11 +2001,19 @@ fn op_to_name(op: &str) -> &str {
     }
 }
 
-fn extract_ffi_info(ty: &Type) -> Option<(String, bool)> {
+#[derive(Debug, Clone, Copy)]
+enum FfiKind {
+    Pure,
+    IO,
+    Iterator,
+}
+
+fn extract_ffi_info(ty: &Type) -> Option<(String, FfiKind)> {
     match ty {
         Type::Arrow(_, b) => extract_ffi_info(b),
-        Type::LuaPure { lua_name, .. } => Some((lua_name.clone(), false)),
-        Type::LuaIO { lua_name, .. } => Some((lua_name.clone(), true)),
+        Type::LuaPure { lua_name, .. } => Some((lua_name.clone(), FfiKind::Pure)),
+        Type::LuaIO { lua_name, .. } => Some((lua_name.clone(), FfiKind::IO)),
+        Type::LuaIterator { lua_name, .. } => Some((lua_name.clone(), FfiKind::Iterator)),
         Type::Paren(inner) => extract_ffi_info(inner),
         _ => None,
     }

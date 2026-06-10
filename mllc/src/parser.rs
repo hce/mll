@@ -891,6 +891,15 @@ impl Parser {
                         let result = self.parse_type_atom()?;
                         Ok(Type::LuaIO { lua_name, result: Box::new(result) })
                     }
+                    "LuaIterator" => {
+                        // LuaIterator "lua.func.name" ElementType
+                        let lua_name = match self.peek().clone() {
+                            Token::StrLit(s) => { self.advance(); s }
+                            _ => return Err("LuaIterator expects a string literal".into()),
+                        };
+                        let result = self.parse_type_atom()?;
+                        Ok(Type::LuaIterator { lua_name, result: Box::new(result) })
+                    }
                     _ => Ok(Type::Con(name)),
                 }
             }

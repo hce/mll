@@ -782,17 +782,28 @@ impl CodeGen {
                 self.emit(&format!("function(_a, _b) return __force(_a) {} __force(_b) end", lua_op));
             }
             TExprKind::SpecCall { specialized, args, .. } => {
-                // Emit directly — could be a Lua FFI name like "math.sin"
-                // Force all args since FFI expects concrete Lua values
-                self.emit(specialized);
-                self.emit("(");
-                for (i, a) in args.iter().enumerate() {
-                    if i > 0 { self.emit(", "); }
-                    self.emit("__force(");
-                    self.gen_expr(a);
+                if let Some(lua_func) = specialized.strip_prefix("__mll_iter:") {
+                    // Iterator FFI: __mll_iter(lua_factory, arg0, arg1, ...)
+                    self.emit("__mll_iter(");
+                    self.emit(lua_func);
+                    for a in args {
+                        self.emit(", __force(");
+                        self.gen_expr(a);
+                        self.emit(")");
+                    }
+                    self.emit(")");
+                } else {
+                    // Regular FFI: lua_func(arg0, arg1, ...)
+                    self.emit(specialized);
+                    self.emit("(");
+                    for (i, a) in args.iter().enumerate() {
+                        if i > 0 { self.emit(", "); }
+                        self.emit("__force(");
+                        self.gen_expr(a);
+                        self.emit(")");
+                    }
                     self.emit(")");
                 }
-                self.emit(")");
             }
         }
     }
@@ -1052,6 +1063,17 @@ local function hashmap_values(m) m = __force(m); local r = nil local ks = {} for
 local function hashmap_member(k, m) k = __force(k); m = __force(m); return m[k] ~= nil end
 local function show_HashMap(m) m = __force(m); local parts = {} for k, v in pairs(m) do parts[#parts+1] = show(k) .. " -> " .. show(v) end table.sort(parts) return "{" .. table.concat(parts, ", ") .. "}" end
 local function hashmap_fromList(xs) xs = __force(xs); local t = {} local cur = xs while cur ~= nil do local pair = __mll_head(cur) t[__force(pair[1])] = __force(pair[2]) cur = __mll_tail(cur) end return t end
+
+-- Iterator-to-lazy-list: calls a Lua iterator factory and builds a lazy MLL list
+local function __mll_iter(factory, ...)
+    local iter = factory(...)
+    local function go()
+        local val = iter()
+        if val == nil then return nil end
+        return __mll_lazy_cons(val, go)
+    end
+    return go()
+end
 
 local function getArgs()
     local result = nil
