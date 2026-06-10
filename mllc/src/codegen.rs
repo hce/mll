@@ -795,7 +795,12 @@ impl CodeGen {
                 self.emit(&format!("function(_a, _b) return __force(_a) {} __force(_b) end", lua_op));
             }
             TExprKind::SpecCall { specialized, args, .. } => {
-                if let Some(lua_name) = specialized.strip_prefix("__mll_const:") {
+                if let Some(elem_show) = specialized.strip_prefix("__mll_show_list:") {
+                    // Specialized list show: iterate with element show function
+                    self.emit(&format!("__mll_show_list({}, ", elem_show));
+                    self.gen_expr(&args[0]);
+                    self.emit(")");
+                } else if let Some(lua_name) = specialized.strip_prefix("__mll_const:") {
                     // Constant access: math.pi (no function call)
                     self.emit(lua_name);
                 } else if let Some(idx) = specialized.strip_prefix("__mll_tup_get:") {
@@ -1093,6 +1098,19 @@ local function hashmap_values(m) m = __force(m); local r = nil local ks = {} for
 local function hashmap_member(k, m) k = __force(k); m = __force(m); return m[k] ~= nil end
 local function show_HashMap(m) m = __force(m); local parts = {} for k, v in pairs(m) do parts[#parts+1] = show(k) .. " -> " .. show(v) end table.sort(parts) return "{" .. table.concat(parts, ", ") .. "}" end
 local function hashmap_fromList(xs) xs = __force(xs); local t = {} local cur = xs while cur ~= nil do local pair = __mll_head(cur) t[__force(pair[1])] = __force(pair[2]) cur = __mll_tail(cur) end return t end
+
+-- Specialized list show: uses a typed element show function
+local function __mll_show_list(elem_show, xs)
+    xs = __force(xs)
+    if xs == nil then return "[]" end
+    local parts = {}
+    local cur = xs
+    while cur ~= nil do
+        parts[#parts + 1] = elem_show(__force(__mll_head(cur)))
+        cur = __mll_tail(cur)
+    end
+    return "[" .. table.concat(parts, ", ") .. "]"
+end
 
 -- Iterator-to-lazy-list: calls a Lua iterator factory and builds a lazy MLL list.
 -- Single-value iterators produce a flat list; multi-value iterators pack into tuples.

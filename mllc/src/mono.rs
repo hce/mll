@@ -217,6 +217,13 @@ impl Monomorphizer {
                         if let Some(mangled) = self.instance_methods.get(&key).cloned() {
                             return TExpr { kind: TExprKind::Var(mangled), ty };
                         } else if let Some(mangled) = self.resolve_parameterized_instance(name, &arg_ty) {
+                            // For show on containers, generate a specialized version
+                            // that dispatches to the element's show instance
+                            if name == "show" {
+                                if let Some(specialized) = self.generate_container_show(&arg_ty) {
+                                    return TExpr { kind: TExprKind::Var(specialized), ty };
+                                }
+                            }
                             return TExpr { kind: TExprKind::Var(mangled), ty };
                         } else if let Ty::Tuple(elem_tys) = &arg_ty {
                             if name == "show" {
@@ -291,8 +298,18 @@ impl Monomorphizer {
                         if !self.is_polymorphic(arg_ty) {
                             let ty_str = format!("{}", arg_ty);
                             let key = (fname.clone(), ty_str);
-                            let resolved = self.instance_methods.get(&key).cloned()
+                            let mut resolved = self.instance_methods.get(&key).cloned()
                                 .or_else(|| self.resolve_parameterized_instance(fname, arg_ty));
+                            // For show on containers/tuples, generate specialized instances
+                            if fname == "show" {
+                                if let Ty::Tuple(elem_tys) = arg_ty {
+                                    resolved = Some(self.generate_tuple_show(elem_tys));
+                                } else if resolved.is_some() {
+                                    if let Some(specialized) = self.generate_container_show(arg_ty) {
+                                        resolved = Some(specialized);
+                                    }
+                                }
+                            }
                             if let Some(mangled) = resolved {
                                 let mono_arg = self.mono_expr(*arg);
                                 return TExpr {
@@ -379,6 +396,74 @@ impl Monomorphizer {
             other => other,
         };
         TExpr { kind, ty }
+    }
+
+    /// Generate a specialized show for a container type (List, Maybe, etc.)
+    /// Returns the mangled name if generated, None if not applicable.
+    fn generate_container_show(&mut self, ty: &Ty) -> Option<String> {
+        match ty {
+            Ty::List(elem_ty) => {
+                let mangled = format!("show_{}", self.ty_to_suffix(ty));
+                let key = ("show".to_string(), format!("{}", ty));
+                if self.instance_methods.contains_key(&key) {
+                    return Some(self.instance_methods.get(&key).unwrap().clone());
+                }
+                self.instance_methods.insert(key, mangled.clone());
+
+                // Resolve show for the element type
+                let elem_show = self.resolve_show_for(elem_ty);
+
+                let str_ty = Ty::Con("String".to_string());
+                let param = "_xs".to_string();
+                let body = TExpr::new(
+                    TExprKind::SpecCall {
+                        original: mangled.clone(),
+                        specialized: format!("__mll_show_list:{}", elem_show),
+                        args: vec![TExpr::new(TExprKind::Var(param.clone()), ty.clone())],
+                    },
+                    str_ty.clone(),
+                );
+                let func = TFunction {
+                    name: mangled.clone(),
+                    ty: Ty::arrow(ty.clone(), str_ty),
+                    clauses: vec![TClause {
+                        patterns: vec![TPattern::Var(param, Ty::Unit)],
+                        guards: vec![],
+                        body,
+                        where_binds: vec![],
+                    }],
+                    specialized: true,
+                };
+                self.generated.push(func);
+                Some(mangled)
+            }
+            _ => None,
+        }
+    }
+
+    /// Resolve the show function name for a given type.
+    fn resolve_show_for(&mut self, ty: &Ty) -> String {
+        let ty_str = format!("{}", ty);
+        let key = ("show".to_string(), ty_str);
+        if let Some(mangled) = self.instance_methods.get(&key) {
+            return mangled.clone();
+        }
+        if let Ty::Tuple(elems) = ty {
+            return self.generate_tuple_show(elems);
+        }
+        if let Ty::List(_) = ty {
+            if let Some(mangled) = self.generate_container_show(ty) {
+                return mangled;
+            }
+        }
+        if let Some(_) = self.resolve_parameterized_instance("show", ty) {
+            // Has a generic instance — generate container show
+            if let Some(mangled) = self.generate_container_show(ty) {
+                return mangled;
+            }
+        }
+        // Fallback to generic runtime show
+        "show".to_string()
     }
 
     /// Generate a specialized show function for a tuple type.
