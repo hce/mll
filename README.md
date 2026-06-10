@@ -133,7 +133,3 @@ internal symbols, so that an arbitrary number of conflicting versions
 can coexist in parallel.
 
 
-## Spec coverage
-
-See [SPEC_COVERAGE.md](SPEC_COVERAGE.md) for a detailed feature matrix.
-
