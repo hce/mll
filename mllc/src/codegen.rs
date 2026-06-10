@@ -818,6 +818,19 @@ impl CodeGen {
                         self.emit(")");
                     }
                     self.emit(")");
+                } else if let Some(method) = specialized.strip_prefix(':') {
+                    // Method call FFI: arg0:method(arg1, arg2, ...)
+                    self.emit("__force(");
+                    self.gen_expr(&args[0]);
+                    self.emit(&format!("):{}", method));
+                    self.emit("(");
+                    for (i, a) in args.iter().enumerate().skip(1) {
+                        if i > 1 { self.emit(", "); }
+                        self.emit("__force(");
+                        self.gen_expr(a);
+                        self.emit(")");
+                    }
+                    self.emit(")");
                 } else {
                     // Regular FFI: lua_func(arg0, arg1, ...)
                     self.emit(specialized);
