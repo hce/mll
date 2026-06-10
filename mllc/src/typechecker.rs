@@ -356,9 +356,11 @@ impl Checker {
         let a = TyVar { name: "a".into(), id: u32::MAX };
         let b = TyVar { name: "b".into(), id: u32::MAX };
         let c = TyVar { name: "c".into(), id: u32::MAX };
+        let m = TyVar { name: "m".into(), id: u32::MAX };
         let ta = Ty::Var(a.clone());
         let tb = Ty::Var(b.clone());
         let tc = Ty::Var(c.clone());
+        let tm = Ty::Var(m.clone());
 
         // Only register types for builtins that are NOT provided by Prelude.mll
         // Prelude.mll provides: putStrLn, sqrt, id, const, flip,
@@ -372,10 +374,12 @@ impl Checker {
             ("error", vec![a.clone()], Ty::arrow(Ty::Con("String".into()), ta.clone())),
             ("otherwise", vec![], Ty::Con("Bool".into())),
             ("seq", vec![a.clone(), b.clone()], Ty::fun(&[ta.clone(), tb.clone()], tb.clone())),
-            ("pure", vec![a.clone()], Ty::arrow(ta.clone(), Ty::io(ta.clone()))),
-            ("return", vec![a.clone()], Ty::arrow(ta.clone(), Ty::io(ta.clone()))),
-            (">>=", vec![a.clone(), b.clone()], Ty::fun(&[Ty::io(ta.clone()), Ty::arrow(ta.clone(), Ty::io(tb.clone()))], Ty::io(tb.clone()))),
-            (">>", vec![a.clone(), b.clone()], Ty::fun(&[Ty::io(ta.clone()), Ty::io(tb.clone())], Ty::io(tb.clone()))),
+            // Monadic operators are polymorphic over the monad (IO, LuaIO s, etc.)
+            // m is a type variable standing for the monadic wrapper (e.g. IO, LuaIO s)
+            ("pure", vec![a.clone(), m.clone()], Ty::arrow(ta.clone(), Ty::App(Box::new(tm.clone()), Box::new(ta.clone())))),
+            ("return", vec![a.clone(), m.clone()], Ty::arrow(ta.clone(), Ty::App(Box::new(tm.clone()), Box::new(ta.clone())))),
+            (">>=", vec![a.clone(), b.clone(), m.clone()], Ty::fun(&[Ty::App(Box::new(tm.clone()), Box::new(ta.clone())), Ty::arrow(ta.clone(), Ty::App(Box::new(tm.clone()), Box::new(tb.clone())))], Ty::App(Box::new(tm.clone()), Box::new(tb.clone())))),
+            (">>", vec![a.clone(), b.clone(), m.clone()], Ty::fun(&[Ty::App(Box::new(tm.clone()), Box::new(ta.clone())), Ty::App(Box::new(tm.clone()), Box::new(tb.clone()))], Ty::App(Box::new(tm.clone()), Box::new(tb.clone())))),
             ("getArgs", vec![], Ty::io(Ty::list(Ty::Con("String".into())))),
             ("exit", vec![], Ty::arrow(Ty::Con("ExitValue".into()), Ty::io(Ty::Unit))),
         ];

@@ -336,6 +336,21 @@ pub fn unify(t1: &Ty, t2: &Ty) -> Result<Subst, TypeErrorKind> {
             Ok(s)
         }
 
+        // Allow App(m, a) to unify with IO(b) by treating IO as App(Con("IO"), ...)
+        (Ty::App(f, a), Ty::IO(b)) | (Ty::IO(b), Ty::App(f, a)) => {
+            let s1 = unify(f, &Ty::Con("IO".into()))?;
+            let s2 = unify(&a.apply_subst(&s1), &b.apply_subst(&s1))?;
+            Ok(s1.compose(&s2))
+        }
+
+        // Allow App(m, a) to unify with LuaIO(s, b) by treating LuaIO as App(App(Con("LuaIO"), s), ...)
+        (Ty::App(f, a), Ty::LuaIO(s, b)) | (Ty::LuaIO(s, b), Ty::App(f, a)) => {
+            let lua_io_s = Ty::App(Box::new(Ty::Con("LuaIO".into())), Box::new(Ty::Var(s.clone())));
+            let s1 = unify(f, &lua_io_s)?;
+            let s2 = unify(&a.apply_subst(&s1), &b.apply_subst(&s1))?;
+            Ok(s1.compose(&s2))
+        }
+
         _ => Err(TypeErrorKind::Mismatch(t1.clone(), t2.clone())),
     }
 }
