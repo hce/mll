@@ -122,6 +122,7 @@ fn examples_compile() {
         "imports_err",
         "imports", "imports2", // missing Lib.MathUtils
         "bench",              // show specialization gap on list display
+        "regex_test",         // deep typechecker recursion on CPS types needs larger stack
     ];
 
     let mut failures = Vec::new();
