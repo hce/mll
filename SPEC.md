@@ -63,7 +63,7 @@ Would translate to:
 
 And also newtype:
 
-    newtype A = Integer
+    newtype A = A Integer
 
 In order to make it easier to interact with plain Lua, we should predefine:
 
