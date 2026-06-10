@@ -61,6 +61,10 @@ MATA-LL TODO
 - [x] LuaTry type family (Lua nil-means-error → Either String a)
 - [ ] Zero-arg LuaIterator (stdinLines) needs IO wrapping to avoid eager eval
 
+## Type system
+
+- [ ] Monadic operators (>>=, >>, return, pure) use hardcoded unification for IO/LuaIO instead of proper Monad typeclass dispatch — revisit once typeclass infrastructure is more mature
+
 ## Can defer (spec says so)
 
 - [ ] Operator fixity declarations (Haskell defaults hardcoded)
