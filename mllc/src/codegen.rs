@@ -150,7 +150,17 @@ impl CodeGen {
             for name in &module.exports {
                 let sname = sanitize_name(name);
                 self.emit_indent();
-                self.emit(&format!("{name} = function(...) return __mll_to_lua({sname}(...)) end,\n"));
+                self.emit(&format!("{name} = function(...)\n"));
+                self.indent += 1;
+                self.emit_indent();
+                self.emit(&format!("local args = table.pack(...)\n"));
+                self.emit_indent();
+                self.emit("for i = 1, args.n do if type(args[i]) == \"function\" then args[i] = __mll_wrap_callback(args[i]) end end\n");
+                self.emit_indent();
+                self.emit(&format!("return __mll_to_lua({sname}(table.unpack(args, 1, args.n)))\n"));
+                self.indent -= 1;
+                self.emit_indent();
+                self.emit("end,\n");
             }
             self.indent -= 1;
             self.emit_line("}");
@@ -1155,6 +1165,16 @@ local function __mll_to_lua(x)
     local result = {}
     for i, v in ipairs(x) do result[i] = __mll_to_lua(v) end
     return result
+end
+
+-- Wrap a Lua callback so it deep-forces all arguments before forwarding.
+-- Used at the FFI boundary: Lua functions don't understand MLL thunks.
+local function __mll_wrap_callback(f)
+    return function(...)
+        local args = table.pack(...)
+        for i = 1, args.n do args[i] = __mll_to_lua(args[i]) end
+        return f(table.unpack(args, 1, args.n))
+    end
 end
 
 -- Run an IO action: if it's a thunk (function), force it; otherwise return as-is
