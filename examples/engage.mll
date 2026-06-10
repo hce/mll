@@ -1,5 +1,6 @@
 export processEvent :: forall s. LuaFunction s -> Integer -> LuaIO s Integer
 processEvent luafn n = do
+    -- putStrLn "Guude"
     let f = engage luafn :: Integer -> Integer -> LuaIO s Integer
     f n (n + 1)
 
