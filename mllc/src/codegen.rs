@@ -650,7 +650,10 @@ impl CodeGen {
                     self.indent += 1;
                     self.emit_indent();
                     self.emit("return ");
+                    let needs_wrap = matches!(&f.kind, TExprKind::OpFunc(_) | TExprKind::Lambda { .. });
+                    if needs_wrap { self.emit("("); }
                     self.gen_expr_raw(f);
+                    if needs_wrap { self.emit(")"); }
                     self.emit("(");
                     for (i, a) in args.iter().enumerate() {
                         if i > 0 { self.emit(", "); }
@@ -666,7 +669,11 @@ impl CodeGen {
                     self.emit("end)");
                 } else {
                     // Full application
+                    // Wrap function literals in parens so Lua allows calling them
+                    let needs_wrap = matches!(&f.kind, TExprKind::OpFunc(_) | TExprKind::Lambda { .. });
+                    if needs_wrap { self.emit("("); }
                     self.gen_expr_raw(f);
+                    if needs_wrap { self.emit(")"); }
                     self.emit("(");
                     for (i, a) in args.iter().enumerate() {
                         if i > 0 { self.emit(", "); }
@@ -969,6 +976,7 @@ fn sanitize_name(name: &str) -> String {
         "main" => "__run".to_string(),
         "return" => "return_".to_string(),
         "not" => "not_".to_string(),
+        "print" => "print_".to_string(),
         "end" => "end_".to_string(),
         "then" => "then_".to_string(),
         "do" => "do_".to_string(),
