@@ -158,11 +158,11 @@ impl Parser {
                 if let Token::UpperIdent(_) = self.peek() {
                     let con_name = self.expect_upper_ident()?;
                     self.expect(&Token::DblColon)?;
-                    let _ty = self.parse_type()?;
-                    // For now, store as empty positional constructor
+                    let ty = self.parse_type()?;
                     constructors.push(Constructor {
                         name: con_name,
                         fields: ConstructorFields::Positional(vec![]),
+                        gadt_type: Some(ty),
                     });
                     self.skip_newlines_and_indent();
                 } else {
@@ -226,6 +226,7 @@ impl Parser {
             return Ok(Constructor {
                 name,
                 fields: ConstructorFields::Named(fields),
+                gadt_type: None,
             });
         }
 
@@ -238,6 +239,7 @@ impl Parser {
         Ok(Constructor {
             name,
             fields: ConstructorFields::Positional(fields),
+            gadt_type: None,
         })
     }
 

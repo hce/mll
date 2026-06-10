@@ -51,6 +51,7 @@ mll_test!(show_required, "show_required.mll");
 mll_test!(either_ordering, "either_ordering.mll");
 mll_test!(dict, "dict.mll");
 mll_test!(hashmap, "hashmap.mll");
+mll_test!(gadts, "gadts.mll");
 
 // Compile-error tests: these SHOULD fail to compile
 #[test]

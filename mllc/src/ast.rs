@@ -286,6 +286,10 @@ pub struct Constraint {
 pub struct Constructor {
     pub name: String,
     pub fields: ConstructorFields,
+    /// GADT constructor type signature, e.g. `Integer -> Expr Integer`.
+    /// When present, field types and result type are extracted from this
+    /// instead of from `fields`.
+    pub gadt_type: Option<Type>,
 }
 
 #[derive(Debug, Clone)]

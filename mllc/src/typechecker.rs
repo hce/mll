@@ -681,16 +681,30 @@ impl Checker {
         let result_type = tvars.iter().fold(Ty::Con(name.to_string()), |acc, tv| Ty::app(acc, Ty::Var(tv.clone())));
 
         for (i, con) in constructors.iter().enumerate() {
-            let field_types: Vec<Ty> = match &con.fields {
-                ConstructorFields::Positional(types) => types.iter().map(|t| self.ast_type_to_ty(t)).collect(),
-                ConstructorFields::Named(fields) => fields.iter().map(|(_, t)| self.ast_type_to_ty(t)).collect(),
+            let (field_types, con_result_type) = if let Some(gadt_ty) = &con.gadt_type {
+                // GADT constructor: decompose type sig into args + return type
+                let full_ty = self.ast_type_to_ty(gadt_ty);
+                let mut args = Vec::new();
+                let mut cur = full_ty;
+                while let Ty::Arrow(a, b) = cur {
+                    args.push(*a);
+                    cur = *b;
+                }
+                (args, cur)
+            } else {
+                // Standard ADT constructor
+                let fts: Vec<Ty> = match &con.fields {
+                    ConstructorFields::Positional(types) => types.iter().map(|t| self.ast_type_to_ty(t)).collect(),
+                    ConstructorFields::Named(fields) => fields.iter().map(|(_, t)| self.ast_type_to_ty(t)).collect(),
+                };
+                (fts, result_type.clone())
             };
 
-            let con_type = if field_types.is_empty() { result_type.clone() } else { Ty::fun(&field_types, result_type.clone()) };
+            let con_type = if field_types.is_empty() { con_result_type.clone() } else { Ty::fun(&field_types, con_result_type.clone()) };
 
             self.constructors.insert(con.name.clone(), ConInfo {
                 type_name: name.to_string(), variant_index: i + 1, total_variants: constructors.len(),
-                field_types: field_types.clone(), type_vars: tvars.clone(), result_type: result_type.clone(),
+                field_types: field_types.clone(), type_vars: tvars.clone(), result_type: con_result_type.clone(),
             });
             self.env.insert(con.name.clone(), Scheme { vars: tvars.clone(), ty: con_type });
 
@@ -748,11 +762,17 @@ impl Checker {
             constructors: constructors.iter().map(|c| {
                 TConstructor {
                     name: c.name.clone(),
-                    fields: match &c.fields {
-                        ConstructorFields::Positional(types) =>
-                            TConFields::Positional(types.iter().map(|t| self.ast_type_to_ty(t)).collect()),
-                        ConstructorFields::Named(fields) =>
-                            TConFields::Named(fields.iter().map(|(n, t)| (n.clone(), self.ast_type_to_ty(t))).collect()),
+                    fields: if c.gadt_type.is_some() {
+                        // GADT: field types come from the registered ConInfo
+                        let con_info = self.constructors.get(&c.name).unwrap();
+                        TConFields::Positional(con_info.field_types.clone())
+                    } else {
+                        match &c.fields {
+                            ConstructorFields::Positional(types) =>
+                                TConFields::Positional(types.iter().map(|t| self.ast_type_to_ty(t)).collect()),
+                            ConstructorFields::Named(fields) =>
+                                TConFields::Named(fields.iter().map(|(n, t)| (n.clone(), self.ast_type_to_ty(t))).collect()),
+                        }
                     },
                 }
             }).collect(),
@@ -1292,7 +1312,9 @@ impl Checker {
 
     /// Check if a list of patterns exhaustively covers a data type.
     /// Returns a list of missing constructor names, or empty if exhaustive.
-    fn check_exhaustiveness(&self, patterns: &[&Pattern]) -> Vec<String> {
+    /// When `scrutinee_ty` is provided, GADT constructors whose return type
+    /// cannot unify with it are excluded (they are unreachable).
+    fn check_exhaustiveness(&self, patterns: &[&Pattern], scrutinee_ty: Option<&Ty>) -> Vec<String> {
         // Collect constructor names, unwrapping parens, checking for catch-alls
         let mut seen_constructors: Vec<String> = Vec::new();
         let mut type_name: Option<String> = None;
@@ -1314,9 +1336,18 @@ impl Checker {
             None => return vec![],
         };
 
-        // Find all constructors for this type
+        // Find all constructors for this type, filtering out GADT-unreachable ones
         let all_constructors: Vec<String> = self.constructors.iter()
             .filter(|(_, info)| info.type_name == type_name)
+            .filter(|(_, info)| {
+                // If we have a scrutinee type, check if this constructor's
+                // result type can unify with it (i.e., is reachable)
+                if let Some(sty) = scrutinee_ty {
+                    unify(&info.result_type, sty).is_ok()
+                } else {
+                    true
+                }
+            })
             .map(|(name, _)| name.clone())
             .collect();
 
@@ -1397,7 +1428,9 @@ impl Checker {
             let first_patterns: Vec<&Pattern> = clauses.iter()
                 .map(|c| &c.patterns[0])
                 .collect();
-            let missing = self.check_exhaustiveness(&first_patterns);
+            // Extract the first argument type for GADT-aware exhaustiveness
+            let first_arg_ty = if let Ty::Arrow(a, _) = &final_ty { Some(a.as_ref()) } else { None };
+            let missing = self.check_exhaustiveness(&first_patterns, first_arg_ty);
             if !missing.is_empty() {
                 self.push_error_span(
                     TypeErrorKind::NonExhaustive(format!(
@@ -1712,7 +1745,8 @@ impl Checker {
                 let case_patterns: Vec<&Pattern> = branches.iter()
                     .map(|b| &b.pattern)
                     .collect();
-                let missing = self.check_exhaustiveness(&case_patterns);
+                let resolved_scrut_ty = scrut_ty.apply_subst(&subst);
+                let missing = self.check_exhaustiveness(&case_patterns, Some(&resolved_scrut_ty));
                 if !missing.is_empty() {
                     let fn_name = self.current_fn.clone().unwrap_or_else(|| "<expr>".into());
                     self.push_error_ctx(
