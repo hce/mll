@@ -47,6 +47,8 @@ impl Monomorphizer {
             "True", "False", "Just", "Nothing",
             ":", "[]", "head", "tail", "take", "zipWith", "length", "reverse",
             "engage", "liftIO",
+            "hmEmpty", "hmInsert", "hmLookup", "hmDelete",
+            "hmSize", "hmKeys", "hmValues", "hmMember",
         ] {
             builtins.insert(name.to_string());
         }
@@ -123,10 +125,17 @@ impl Monomorphizer {
     fn has_parameterized_instance(&self, method: &str, concrete_ty: &Ty) -> bool {
         let base = match concrete_ty {
             Ty::List(_) => "[]",
-            Ty::App(f, _) => match f.as_ref() {
-                Ty::Con(name) => name.as_str(),
-                _ => return false,
-            },
+            Ty::App(f, _) => {
+                // Unwrap nested App to find the base constructor: App(App(Con("HashMap"), _), _) -> "HashMap"
+                let mut head = f.as_ref();
+                loop {
+                    match head {
+                        Ty::Con(name) => break name.as_str(),
+                        Ty::App(inner, _) => head = inner.as_ref(),
+                        _ => return false,
+                    }
+                }
+            }
             _ => return false,
         };
         self.instance_methods.contains_key(&(method.to_string(), base.to_string()))

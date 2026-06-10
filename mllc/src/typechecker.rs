@@ -359,6 +359,23 @@ impl Checker {
         for (name, vars, ty) in entries {
             self.env.insert(name.into(), Scheme { vars, ty });
         }
+        // HashMap operations (backed by Lua tables)
+        let hm = |k: Ty, v: Ty| Ty::app(Ty::app(Ty::Con("HashMap".into()), k), v);
+        let hm_kv = hm(ta.clone(), tb.clone());
+        let hm_entries: Vec<(&str, Vec<TyVar>, Ty)> = vec![
+            ("hmEmpty", vec![a.clone(), b.clone()], hm_kv.clone()),
+            ("hmInsert", vec![a.clone(), b.clone()], Ty::fun(&[ta.clone(), tb.clone(), hm_kv.clone()], hm_kv.clone())),
+            ("hmLookup", vec![a.clone(), b.clone()], Ty::fun(&[ta.clone(), hm_kv.clone()], Ty::app(Ty::Con("Maybe".into()), tb.clone()))),
+            ("hmDelete", vec![a.clone(), b.clone()], Ty::fun(&[ta.clone(), hm_kv.clone()], hm_kv.clone())),
+            ("hmSize", vec![a.clone(), b.clone()], Ty::arrow(hm_kv.clone(), Ty::Con("Integer".into()))),
+            ("hmKeys", vec![a.clone(), b.clone()], Ty::arrow(hm_kv.clone(), Ty::list(ta.clone()))),
+            ("hmValues", vec![a.clone(), b.clone()], Ty::arrow(hm_kv.clone(), Ty::list(tb.clone()))),
+            ("hmMember", vec![a.clone(), b.clone()], Ty::fun(&[ta.clone(), hm_kv.clone()], Ty::Con("Bool".into()))),
+        ];
+        for (name, vars, ty) in hm_entries {
+            self.env.insert(name.into(), Scheme { vars, ty });
+        }
+
         for name in &["max", "min"] {
             self.env.insert(name.to_string(), Scheme { vars: vec![a.clone()], ty: Ty::fun(&[ta.clone(), ta.clone()], ta.clone()) });
         }
@@ -547,6 +564,23 @@ impl Checker {
         }
         // LuaFunction: kind Type -> Type
         self.kinds.insert("LuaFunction".to_string(), type_to_type.clone());
+        // HashMap: kind Type -> Type -> Type
+        self.kinds.insert("HashMap".to_string(),
+            Kind::Arrow(Box::new(Kind::Type),
+                Box::new(Kind::Arrow(Box::new(Kind::Type), Box::new(Kind::Type)))));
+        // Show instance for HashMap (uses Lua show fallback)
+        self.instances.insert(
+            ("Show".to_string(), "HashMap".to_string()),
+            InstanceInfo {
+                class_name: "Show".to_string(),
+                target_type: Ty::Con("HashMap".into()),
+                method_fns: {
+                    let mut m = HashMap::new();
+                    m.insert("show".to_string(), "show_HashMap".to_string());
+                    m
+                },
+            },
+        );
     }
 
     /// Get the kind of a type constructor, or infer Type for unknowns.

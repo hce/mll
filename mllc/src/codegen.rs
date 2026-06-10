@@ -751,6 +751,14 @@ impl CodeGen {
 fn sanitize_name(name: &str) -> String {
     match name {
         "main" => "__run".to_string(),
+        "hmEmpty" => "hashmap_empty".to_string(),
+        "hmInsert" => "hashmap_insert".to_string(),
+        "hmLookup" => "hashmap_lookup".to_string(),
+        "hmDelete" => "hashmap_delete".to_string(),
+        "hmSize" => "hashmap_size".to_string(),
+        "hmKeys" => "hashmap_keys".to_string(),
+        "hmValues" => "hashmap_values".to_string(),
+        "hmMember" => "hashmap_member".to_string(),
         _ => name.replace('\'', "_prime").replace('-', "_"),
     }
 }
@@ -875,6 +883,18 @@ local function ord_le__String(a, b) return a <= b end
 local function ord_ge__Integer(a, b) return a >= b end
 local function ord_ge__Number(a, b) return a >= b end
 local function ord_ge__String(a, b) return a >= b end
+-- HashMap runtime (backed by Lua tables)
+local hashmap_empty = {}
+local function hashmap_insert(k, v, m) local t = {} for a,b in pairs(m) do t[a] = b end t[k] = v return t end
+local function hashmap_lookup(k, m) local v = m[k] if v == nil then return nil else return v end end
+local function hashmap_delete(k, m) local t = {} for a,b in pairs(m) do t[a] = b end t[k] = nil return t end
+local function hashmap_size(m) local n = 0 for _ in pairs(m) do n = n + 1 end return n end
+local function hashmap_keys(m) local r = nil local ks = {} for k in pairs(m) do ks[#ks+1] = k end table.sort(ks) for i = #ks, 1, -1 do r = __mll_cons(ks[i], r) end return r end
+local function hashmap_values(m) local r = nil local ks = {} for k in pairs(m) do ks[#ks+1] = k end table.sort(ks) for i = #ks, 1, -1 do r = __mll_cons(m[ks[i]], r) end return r end
+local function hashmap_member(k, m) return m[k] ~= nil end
+local function show_HashMap(m) local parts = {} for k, v in pairs(m) do parts[#parts+1] = show(k) .. " -> " .. show(v) end table.sort(parts) return "{" .. table.concat(parts, ", ") .. "}" end
+local function hashmap_fromList(xs) local t = {} local cur = xs while cur ~= nil do local pair = __mll_head(cur) t[pair[1]] = pair[2] cur = __mll_tail(cur) end return t end
+
 local function getArgs()
     local result = nil
     if arg then
