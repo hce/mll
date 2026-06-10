@@ -93,6 +93,15 @@ This interface is used both to call into Lua as well as to export
 functions to Lua.
 
 
+## Example: Calling MLL from Lua
+
+| `fib.mll` | `callfib.lua` |
+|-----------|---------------|
+| <pre>fib :: [Integer]<br>fib = 1:1:zipWith (+) fib (tail fib)<br><br>export fibonacci :: Integer -> [Integer]<br>fibonacci = flip take fib</pre> | <pre>local fib = require "fib"<br><br>local fibs = fib.fibonacci(8)<br>for i, n in ipairs(fibs) do<br>    print(i, n)<br>end</pre> |
+
+Exported functions deep-force their return values: lazy lists become
+plain Lua arrays, thunks are resolved. Lua callers see native values.
+
 ## Evaluation strategy
 
 MATA-LL uses non-strict evaluation, like Haskell. Function arguments
