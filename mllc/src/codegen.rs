@@ -836,6 +836,8 @@ local function show_Integer(x) return show(x) end
 local function show_Number(x) return show(x) end
 local function show_String(x) return show(x) end
 local function show_Bool(x) return show(x) end
+local function show_List_(x) return show(x) end
+local function show_Maybe(x) return show(x) end
 local function eq_Integer(a, b) return a == b end
 local function eq_Number(a, b) return a == b end
 local function eq_String(a, b) return a == b end
@@ -852,6 +854,33 @@ local function ord_le__String(a, b) return a <= b end
 local function ord_ge__Integer(a, b) return a >= b end
 local function ord_ge__Number(a, b) return a >= b end
 local function ord_ge__String(a, b) return a >= b end
+local function head(xs) return __mll_head(xs) end
+local function tail(xs) return __mll_tail(xs) end
+local function map(f, xs)
+    if xs == nil then return nil end
+    return __mll_lazy_cons(f(__mll_head(xs)), function()
+        return map(f, __mll_tail(xs))
+    end)
+end
+local function filter(pred, xs)
+    if xs == nil then return nil end
+    local h = __mll_head(xs)
+    if pred(h) then
+        return __mll_lazy_cons(h, function() return filter(pred, __mll_tail(xs)) end)
+    else
+        return filter(pred, __mll_tail(xs))
+    end
+end
+local function take(n, xs)
+    if n <= 0 or xs == nil then return nil end
+    return __mll_cons(__mll_head(xs), take(n - 1, __mll_tail(xs)))
+end
+local function zipWith(f, xs, ys)
+    if xs == nil or ys == nil then return nil end
+    return __mll_lazy_cons(f(__mll_head(xs), __mll_head(ys)), function()
+        return zipWith(f, __mll_tail(xs), __mll_tail(ys))
+    end)
+end
 -- Hash helper
 local function __mll_hashstr(s) local h = 5381 for i = 1, #s do h = ((h * 33) + string.byte(s, i)) % 2147483647 end return h end
 

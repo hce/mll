@@ -391,7 +391,13 @@ impl Checker {
         for name in &["mod", "div"] {
             self.env.insert(name.to_string(), Scheme { vars: vec![], ty: Ty::fun(&[Ty::Con("Integer".into()), Ty::Con("Integer".into())], Ty::Con("Integer".into())) });
         }
-        // map, filter, foldl, foldr are now in Prelude.mll
+        // List functions that need lazy cons (implemented in Lua runtime)
+        self.env.insert("head".into(), Scheme { vars: vec![a.clone()], ty: Ty::arrow(Ty::list(ta.clone()), ta.clone()) });
+        self.env.insert("tail".into(), Scheme { vars: vec![a.clone()], ty: Ty::arrow(Ty::list(ta.clone()), Ty::list(ta.clone())) });
+        self.env.insert("map".into(), Scheme { vars: vec![a.clone(), b.clone()], ty: Ty::fun(&[Ty::arrow(ta.clone(), tb.clone()), Ty::list(ta.clone())], Ty::list(tb.clone())) });
+        self.env.insert("filter".into(), Scheme { vars: vec![a.clone(), b.clone()], ty: Ty::fun(&[Ty::arrow(ta.clone(), Ty::Con("Bool".into())), Ty::list(ta.clone())], Ty::list(ta.clone())) });
+        self.env.insert("take".into(), Scheme { vars: vec![a.clone()], ty: Ty::fun(&[Ty::Con("Integer".into()), Ty::list(ta.clone())], Ty::list(ta.clone())) });
+        self.env.insert("zipWith".into(), Scheme { vars: vec![a.clone(), b.clone(), c.clone()], ty: Ty::fun(&[Ty::fun(&[ta.clone(), tb.clone()], tc.clone()), Ty::list(ta.clone()), Ty::list(tb.clone())], Ty::list(tc.clone())) });
 
         // Maybe
         self.constructors.insert("Just".into(), ConInfo { type_name: "Maybe".into(), variant_index: 1, total_variants: 2, field_types: vec![ta.clone()], type_vars: vec![a.clone()], result_type: Ty::app(Ty::Con("Maybe".into()), ta.clone()) });
