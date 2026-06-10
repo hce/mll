@@ -796,7 +796,24 @@ impl CodeGen {
                 self.emit(&format!("function(_a, _b) return __force(_a) {} __force(_b) end", lua_op));
             }
             TExprKind::SpecCall { specialized, args, .. } => {
-                if let Some(elem_show) = specialized.strip_prefix("__mll_show_list:") {
+                if let Some(rest) = specialized.strip_prefix("__mll_tuple_eq:") {
+                    // Tuple eq: compare element-wise
+                    // Format: __mll_tuple_eq:N:eq_E1,eq_E2,...
+                    let parts: Vec<&str> = rest.splitn(2, ':').collect();
+                    let n: usize = parts[0].parse().unwrap();
+                    let eq_fns: Vec<&str> = parts[1].split(',').collect();
+                    self.emit("(");
+                    for i in 0..n {
+                        if i > 0 { self.emit(" and "); }
+                        self.emit(eq_fns[i]);
+                        self.emit("(__force(");
+                        self.gen_expr(&args[0]);
+                        self.emit(&format!(")[{}], __force(", i + 1));
+                        self.gen_expr(&args[1]);
+                        self.emit(&format!(")[{}])", i + 1));
+                    }
+                    self.emit(")");
+                } else if let Some(elem_show) = specialized.strip_prefix("__mll_show_list:") {
                     // Specialized list show: iterate with element show function
                     self.emit(&format!("__mll_show_list({}, ", elem_show));
                     self.gen_expr(&args[0]);
@@ -893,7 +910,21 @@ impl CodeGen {
         match lit {
             TLiteral::Integer(n) => self.emit(&format!("{}", n)),
             TLiteral::Number(n) => self.emit(&format!("{}", n)),
-            TLiteral::Str(s) => self.emit(&format!("\"{}\"", s)),
+            TLiteral::Str(s) => {
+                self.emit("\"");
+                for c in s.chars() {
+                    match c {
+                        '\n' => self.emit("\\n"),
+                        '\r' => self.emit("\\r"),
+                        '\t' => self.emit("\\t"),
+                        '\\' => self.emit("\\\\"),
+                        '"' => self.emit("\\\""),
+                        '\0' => self.emit("\\0"),
+                        _ => self.emit(&c.to_string()),
+                    }
+                }
+                self.emit("\"");
+            }
             TLiteral::Bool(true) => self.emit("true"),
             TLiteral::Bool(false) => self.emit("false"),
             TLiteral::Unit => self.emit("nil"),

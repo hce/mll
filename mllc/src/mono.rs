@@ -349,6 +349,38 @@ impl Monomorphizer {
                             ),
                             ty,
                         };
+                    } else if let Ty::Tuple(elem_tys) = &lhs.ty {
+                        if op == "==" || op == "/=" {
+                            let mangled = self.generate_tuple_eq(elem_tys);
+                            let mono_lhs = self.mono_expr(*lhs);
+                            let mono_rhs = self.mono_expr(*rhs);
+                            let eq_call = TExpr {
+                                kind: TExprKind::App(
+                                    Box::new(TExpr::new(
+                                        TExprKind::App(
+                                            Box::new(TExpr::new(TExprKind::Var(mangled), Ty::Unit)),
+                                            Box::new(mono_lhs),
+                                        ),
+                                        Ty::Unit,
+                                    )),
+                                    Box::new(mono_rhs),
+                                ),
+                                ty: ty.clone(),
+                            };
+                            if op == "/=" {
+                                return TExpr {
+                                    kind: TExprKind::App(
+                                        Box::new(TExpr::new(TExprKind::Var("not_".to_string()), Ty::Unit)),
+                                        Box::new(eq_call),
+                                    ),
+                                    ty,
+                                };
+                            }
+                            return eq_call;
+                        }
+                        self.errors.push(format!(
+                            "No instance for '{}' on type '{}'", op, ty_str
+                        ));
                     } else if self.resolve_parameterized_instance(&op, &lhs.ty).is_none() {
                         self.errors.push(format!(
                             "No instance for '{}' on type '{}'", op, ty_str
@@ -400,6 +432,66 @@ impl Monomorphizer {
 
     /// Generate a specialized show for a container type (List, Maybe, etc.)
     /// Returns the mangled name if generated, None if not applicable.
+    /// Generate a specialized eq function for a tuple type.
+    fn generate_tuple_eq(&mut self, elem_tys: &[Ty]) -> String {
+        let tuple_ty = Ty::Tuple(elem_tys.to_vec());
+        let mangled = format!("eq_{}", self.ty_to_suffix(&tuple_ty));
+
+        let key = ("==".to_string(), format!("{}", tuple_ty));
+        if let Some(existing) = self.instance_methods.get(&key) {
+            return existing.clone();
+        }
+        self.instance_methods.insert(key, mangled.clone());
+
+        // Resolve eq for each element type
+        let mut elem_eq_names = Vec::new();
+        for et in elem_tys {
+            let eq_name = self.instance_methods
+                .get(&("==".to_string(), format!("{}", et)))
+                .cloned()
+                .unwrap_or_else(|| "eq".to_string());
+            elem_eq_names.push(eq_name);
+        }
+
+        // Build body: eq_E1(a[1], b[1]) and eq_E2(a[2], b[2]) and ...
+        let bool_ty = Ty::Con("Bool".to_string());
+        let a = "_a".to_string();
+        let b = "_b".to_string();
+
+        // Encode element eq names in the SpecCall
+        let eq_spec = format!("__mll_tuple_eq:{}:{}", elem_tys.len(),
+            elem_eq_names.join(","));
+
+        let body = TExpr::new(
+            TExprKind::SpecCall {
+                original: mangled.clone(),
+                specialized: eq_spec,
+                args: vec![
+                    TExpr::new(TExprKind::Var(a.clone()), tuple_ty.clone()),
+                    TExpr::new(TExprKind::Var(b.clone()), tuple_ty.clone()),
+                ],
+            },
+            bool_ty.clone(),
+        );
+
+        let func = TFunction {
+            name: mangled.clone(),
+            ty: Ty::fun(&[tuple_ty.clone(), tuple_ty], bool_ty),
+            clauses: vec![TClause {
+                patterns: vec![
+                    TPattern::Var(a, Ty::Unit),
+                    TPattern::Var(b, Ty::Unit),
+                ],
+                guards: vec![],
+                body,
+                where_binds: vec![],
+            }],
+            specialized: true,
+        };
+        self.generated.push(func);
+        mangled
+    }
+
     fn generate_container_show(&mut self, ty: &Ty) -> Option<String> {
         match ty {
             Ty::List(elem_ty) => {
