@@ -45,8 +45,8 @@ adding many targets, and for those, keeping C out is making the build
 process more robust.
 
 Since I think the combination of rust and Lua is a good one, one of
-the primary goals of this project is to make the Lua part more
-enjoyable.
+the primary goals of this project is to make the Lua part a bit 
+more statically typed.
 
 I miss writing haskell code but have mostly decided to do production
 work in rust. A lot of "business logic" is hard to *write* efficiently
