@@ -1,6 +1,9 @@
 Modest Attempt at Typesystem Augmenting the Lua Language (mata-ll)
 ==================================================================
 
+mata-ll is a subset of haskell that is compiled directly into a single
+Lua file with no external dependencies.
+
 If you make a mistake, the compiler is already there to
 stop you before any harm can spread to the runtime.
 
