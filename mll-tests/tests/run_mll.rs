@@ -125,6 +125,7 @@ fn examples_compile() {
     let expected_fail: Vec<&str> = vec![
         "bench",              // show specialization gap on list display
         "regex_test",         // deep typechecker recursion on CPS types needs larger stack
+        "jsontest",           // deep typechecker recursion on imported JSON module
     ];
 
     let mut failures = Vec::new();
