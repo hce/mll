@@ -695,10 +695,14 @@ impl CodeGen {
                     }
                     ">>=" => {
                         // IO bind: lhs >>= rhs  =>  rhs(__mll_run(lhs))
-                        // lhs is an IO action — may be a thunk (function) that
-                        // needs to be called, or an eagerly evaluated value.
                         self.emit("("); self.gen_expr(rhs); self.emit(")(");
                         self.emit("__mll_run("); self.gen_expr(lhs); self.emit("))");
+                        return;
+                    }
+                    ">>" => {
+                        // IO then: lhs >> rhs  =>  __mll_run(lhs); rhs
+                        self.emit("(function() __mll_run("); self.gen_expr(lhs);
+                        self.emit("); return "); self.gen_expr(rhs); self.emit(" end)()");
                         return;
                     }
                     "." => {
@@ -791,7 +795,10 @@ impl CodeGen {
                 self.emit(&format!("function(_a, _b) return __force(_a) {} __force(_b) end", lua_op));
             }
             TExprKind::SpecCall { specialized, args, .. } => {
-                if let Some(idx) = specialized.strip_prefix("__mll_tup_get:") {
+                if let Some(lua_name) = specialized.strip_prefix("__mll_const:") {
+                    // Constant access: math.pi (no function call)
+                    self.emit(lua_name);
+                } else if let Some(idx) = specialized.strip_prefix("__mll_tup_get:") {
                     // Tuple field access: t[N]
                     self.emit("__force(");
                     self.gen_expr(&args[0]);

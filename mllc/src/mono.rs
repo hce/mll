@@ -46,7 +46,7 @@ impl Monomorphizer {
             "&&", "||", "mod", "div", "map", "filter", "foldl", "foldr",
             "True", "False", "Just", "Nothing",
             ":", "[]", "head", "tail", "take", "zipWith", "length", "reverse",
-            "engage", "liftIO", ">>=", "return", "pure",
+            "engage", "liftIO", ">>=", ">>", "return", "pure",
             "hmEmpty", "hmInsert", "hmLookup", "hmDelete",
             "hmSize", "hmKeys", "hmValues", "hmMember",
         ] {

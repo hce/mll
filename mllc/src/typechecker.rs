@@ -368,6 +368,7 @@ impl Checker {
             ("pure", vec![a.clone()], Ty::arrow(ta.clone(), Ty::io(ta.clone()))),
             ("return", vec![a.clone()], Ty::arrow(ta.clone(), Ty::io(ta.clone()))),
             (">>=", vec![a.clone(), b.clone()], Ty::fun(&[Ty::io(ta.clone()), Ty::arrow(ta.clone(), Ty::io(tb.clone()))], Ty::io(tb.clone()))),
+            (">>", vec![a.clone(), b.clone()], Ty::fun(&[Ty::io(ta.clone()), Ty::io(tb.clone())], Ty::io(tb.clone()))),
             ("getArgs", vec![], Ty::io(Ty::list(Ty::Con("String".into())))),
             ("exit", vec![], Ty::arrow(Ty::Con("ExitValue".into()), Ty::io(Ty::Unit))),
         ];
@@ -1977,6 +1978,29 @@ impl Checker {
             }
         }
         let ret_ty = current;
+
+        // Zero-arg FFI: constant access (e.g., math.pi), not a function call
+        if arg_types.is_empty() {
+            let body = TExpr::new(
+                TExprKind::SpecCall {
+                    original: name.to_string(),
+                    specialized: format!("__mll_const:{}", lua_name),
+                    args: vec![],
+                },
+                ret_ty.clone(),
+            );
+            return TFunction {
+                name: name.to_string(),
+                ty: ty.clone(),
+                clauses: vec![TClause {
+                    patterns: vec![],
+                    guards: vec![],
+                    body,
+                    where_binds: vec![],
+                }],
+                specialized: false,
+            };
+        }
 
         // Generate parameter names and patterns
         let params: Vec<(String, Ty)> = arg_types.iter().enumerate()
