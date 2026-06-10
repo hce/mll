@@ -937,8 +937,10 @@ impl Checker {
                         );
                     }
                 }
-                Decl::ExportSig { name, .. } => {
+                Decl::ExportSig { name, ty } => {
                     exports.push(name.clone());
+                    // Validate: callback parameters in exports must return LuaIO s
+                    self.check_export_callbacks(name, ty);
                 }
                 _ => {}
             }
@@ -2062,6 +2064,67 @@ impl Checker {
                 where_binds: vec![],
             }],
             specialized: false,
+        }
+    }
+
+    /// Check that function-typed parameters in an export signature return LuaIO.
+    /// Lua functions are untrusted and assumed effectful, so callback parameters
+    /// must have their return type in `LuaIO s a` form.
+    fn check_export_callbacks(&mut self, name: &str, ty: &Type) {
+        // Walk the arrow chain to find parameters
+        let mut current = ty;
+        // Skip forall
+        if let Type::Forall { inner, .. } = current {
+            current = inner;
+        }
+        // Walk arrow parameters
+        while let Type::Arrow(param, ret) = current {
+            self.check_callback_param(name, param);
+            current = ret;
+        }
+    }
+
+    /// If a parameter is a function type, check its return type ends in LuaIO/ScopedLuaIO.
+    fn check_callback_param(&mut self, export_name: &str, param: &Type) {
+        // Unwrap parens
+        let p = match param {
+            Type::Paren(inner) => inner.as_ref(),
+            _ => param,
+        };
+        // Check if this parameter is a function type
+        if let Type::Arrow(_, _) = p {
+            // Find the ultimate return type of this callback
+            let mut ret = p;
+            while let Type::Arrow(_, r) = ret {
+                ret = r;
+            }
+            // Unwrap parens on return type
+            let ret = match ret {
+                Type::Paren(inner) => inner.as_ref(),
+                _ => ret,
+            };
+            // Must be ScopedLuaIO or an IO-like type
+            let is_lua_io = match ret {
+                Type::ScopedLuaIO { .. } => true,
+                Type::App(outer, _) => {
+                    if let Type::App(con, _) = outer.as_ref() {
+                        matches!(con.as_ref(), Type::Con(c) if c == "LuaIO")
+                    } else {
+                        false
+                    }
+                }
+                _ => false,
+            };
+            if !is_lua_io {
+                self.errors.push(TypeError::in_context(
+                    TypeErrorKind::Other(format!(
+                        "Export '{}': callback parameter must return LuaIO s a. \
+                         Lua functions are untrusted and assumed effectful.",
+                        export_name
+                    )),
+                    format!("export declaration of '{}'", export_name),
+                ));
+            }
         }
     }
 }

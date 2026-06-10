@@ -1,8 +1,5 @@
-export processEvent :: forall s. LuaFunction s -> Integer -> LuaIO s Integer
-processEvent luafn n = do
-    -- putStrLn "Guude"
-    let f = engage luafn :: Integer -> Integer -> LuaIO s Integer
-    f n (n + 1)
+export processEvent :: forall s. (Integer -> Integer -> LuaIO s Integer) -> Integer -> LuaIO s Integer
+processEvent f n = f n (n + 1)
 
 main :: IO ()
 main = putStrLn "engage test ok"
