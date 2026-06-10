@@ -19,6 +19,12 @@ MATA-LL TODO
 - [x] Show instance enforcement
 - [x] Mutual recursion support
 - [x] Composition codegen fix
+- [x] GADTs (full pipeline: parser, type checker, exhaustiveness, codegen)
+- [x] Non-strict evaluation with cheapness analysis
+- [x] seq :: a -> b -> b (explicit forcing)
+- [x] Guards in where-clause bindings
+- [x] Do-notation: break on closing paren
+- [x] __mll_run for IO thunk forcing in >>=
 
 ## Typeclasses and dispatch
 
@@ -36,14 +42,15 @@ MATA-LL TODO
 
 ## Language features
 
-- [ ] GADTs (parser recognizes syntax, type checker discards type info)
 - [x] Record construction with named fields: Person { perName = "Morpheus" }
 - [x] Qualified import name prefixing (import qualified Data.Tree as T)
-- [ ] Orphan instance detection
 - [x] Polymorphic recursion detection (specialization depth limit)
-- [ ] Process intrinsic declarations properly
 - [x] Expression type ascription (expr :: Type)
-- [ ] when (needs lazy IO or thunked actions)
+- [ ] Orphan instance detection
+- [ ] Process intrinsic declarations properly
+- [ ] when (now feasible with non-strict evaluation)
+- [ ] Strictness analysis: skip __force on known-concrete variables
+      (pattern-matched params, cheap let bindings) to reduce overhead
 
 ## Can defer (spec says so)
 
