@@ -17,3 +17,5 @@ main = do
     putStrLn $ "frexp 0.75 = " ++ show fr
     let m = modf 3.75
     putStrLn $ "modf 3.75 = " ++ show m
+    print 17.23
+    print (17, 23)
