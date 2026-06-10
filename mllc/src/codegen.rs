@@ -562,13 +562,23 @@ impl CodeGen {
         }
     }
 
-    /// Emit an expression without __force wrapping on variables.
-    /// Used for function position in App (functions are never thunked).
+    /// Emit an expression in function-call position.
+    /// Variables known to be concrete (already forced) are emitted bare.
+    /// Unknown variables are forced — they may be let-bound thunks.
     fn gen_expr_raw(&mut self, expr: &TExpr) {
         if let TExprKind::Var(name) = &expr.kind {
             match name.as_str() {
                 "otherwise" => self.emit("true"),
-                _ => self.emit(&sanitize_name(name)),
+                _ => {
+                    let sname = sanitize_name(name);
+                    if self.concrete_vars.contains(&sname) {
+                        self.emit(&sname);
+                    } else {
+                        self.emit("__force(");
+                        self.emit(&sname);
+                        self.emit(")");
+                    }
+                }
             }
         } else {
             self.gen_expr(expr);
@@ -1129,7 +1139,9 @@ end
 
 -- Primitives that require Lua runtime dispatch
 local function not_(x) return not __force(x) end
-local function engage(f) return f end
+local function engage(f, ...)
+    if select('#', ...) > 0 then return __force(f)(...) else return __force(f) end
+end
 local function liftIO(action) return action end
 local function show(x)
     x = __force(x)
