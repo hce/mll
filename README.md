@@ -1,9 +1,9 @@
 Modest Attempt at Typesystem Augmenting the Lua Language (mata-ll)
 ==================================================================
 
-| `fib.mll` | `callfib.lua` |
-|-----------|---------------|
-| <pre>fib :: [Integer]<br>fib = 1:1:zipWith (+) fib (tail fib)<br><br>export fibonacci :: Integer -> [Integer]<br>fibonacci = flip take fib</pre> | <pre>local fib = require "fib"<br><br>local fibs = fib.fibonacci(8)<br>for i, n in ipairs(fibs) do<br>    print(i, n)<br>end</pre> |
+| `callfib.lua` | `fib.mll` |
+|---------------|-----------|
+| <pre>local fib = require "fib"<br><br>local fibs = fib.fibonacci(8)<br>for i, n in ipairs(fibs) do<br>    print(i, n)<br>end</pre> | <pre>fib :: [Integer]<br>fib = 1:1:zipWith (+) fib (tail fib)<br><br>export fibonacci :: Integer -> [Integer]<br>fibonacci = flip take fib</pre> |
 
 ```haskell
 -- random.mll: two lines of FFI, the rest is Haskell
