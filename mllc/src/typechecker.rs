@@ -352,6 +352,7 @@ impl Checker {
             ("not", vec![], Ty::arrow(Ty::Con("Bool".into()), Ty::Con("Bool".into()))),
             ("error", vec![a.clone()], Ty::arrow(Ty::Con("String".into()), ta.clone())),
             ("otherwise", vec![], Ty::Con("Bool".into())),
+            ("seq", vec![a.clone(), b.clone()], Ty::fun(&[ta.clone(), tb.clone()], tb.clone())),
             ("pure", vec![a.clone()], Ty::arrow(ta.clone(), Ty::io(ta.clone()))),
             ("return", vec![a.clone()], Ty::arrow(ta.clone(), Ty::io(ta.clone()))),
             (">>=", vec![a.clone(), b.clone()], Ty::fun(&[Ty::io(ta.clone()), Ty::arrow(ta.clone(), Ty::io(tb.clone()))], Ty::io(tb.clone()))),

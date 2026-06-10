@@ -244,6 +244,12 @@ impl CodeGen {
                 self.gen_where_binds(&clause.where_binds);
                 self.emit_indent(); self.emit("return "); self.gen_expr(&clause.body); self.emit("\n");
             } else {
+                // Force only args that are destructured
+                for (i, p) in params.iter().enumerate() {
+                    if !matches!(&clause.patterns[i], TPattern::Var(_, _) | TPattern::Wildcard) {
+                        self.emit_line(&format!("{} = __force({})", p, p));
+                    }
+                }
                 self.gen_where_binds(&clause.where_binds);
                 self.gen_pattern_match(&params, clauses);
             }
@@ -261,6 +267,17 @@ impl CodeGen {
         self.emit(&self.fn_decl(&lua_name, &params_str));
         self.emit("\n");
         self.indent += 1;
+        // Force only args that are destructured (not just var/wildcard bindings)
+        for (i, p) in params.iter().enumerate() {
+            let needs_force = clauses.iter().any(|c| {
+                c.patterns.get(i).map_or(false, |pat| {
+                    !matches!(pat, TPattern::Var(_, _) | TPattern::Wildcard)
+                })
+            });
+            if needs_force {
+                self.emit_line(&format!("{} = __force({})", p, p));
+            }
+        }
         self.gen_pattern_match(&params, clauses);
         self.indent -= 1;
         self.emit_line("end");
@@ -275,8 +292,14 @@ impl CodeGen {
             if bind.patterns.is_empty() {
                 // Simple value binding: local x = expr
                 self.emit_indent();
-                self.emit(&format!("local {} = ", sanitize_name(&bind.name)));
-                self.gen_expr(&bind.body);
+                if Self::is_cheap(&bind.body) {
+                    self.emit(&format!("local {} = ", sanitize_name(&bind.name)));
+                    self.gen_expr(&bind.body);
+                } else {
+                    self.emit(&format!("local {} = __thunk(function() return ", sanitize_name(&bind.name)));
+                    self.gen_expr(&bind.body);
+                    self.emit(" end)");
+                }
                 self.emit("\n");
                 i += 1;
             } else {
@@ -481,12 +504,65 @@ impl CodeGen {
         }
     }
 
+    /// Returns true if an expression is cheap enough that thunking it would
+    /// cost more than evaluating it eagerly. This prevents thunk chain buildup
+    /// in accumulator patterns while preserving laziness for expensive
+    /// computations (user function calls).
+    fn is_cheap(expr: &TExpr) -> bool {
+        match &expr.kind {
+            TExprKind::Lit(_) | TExprKind::Con(_) | TExprKind::Var(_)
+            | TExprKind::Lambda { .. } | TExprKind::OpFunc(_) => true,
+            TExprKind::Paren(inner) | TExprKind::Negate(inner) => Self::is_cheap(inner),
+            TExprKind::InfixApp { op, lhs, rhs } => {
+                // Builtin ops (arithmetic, comparison, concat) are cheap
+                // if their operands are cheap
+                is_builtin_op(op) && Self::is_cheap(lhs) && Self::is_cheap(rhs)
+            }
+            TExprKind::App(func, arg) => {
+                // Constructor applications are cheap (just table creation)
+                if Self::is_con_app(expr) {
+                    Self::is_cheap(arg) && Self::is_cheap(func)
+                } else {
+                    false
+                }
+            }
+            // Function calls, case, if, let — potentially expensive, thunk them
+            _ => false,
+        }
+    }
+
+    /// Check if an expression is a constructor application (Con applied to args)
+    fn is_con_app(expr: &TExpr) -> bool {
+        match &expr.kind {
+            TExprKind::Con(_) => true,
+            TExprKind::App(func, _) => Self::is_con_app(func),
+            _ => false,
+        }
+    }
+
+    /// Emit an expression without __force wrapping on variables.
+    /// Used for function position in App (functions are never thunked).
+    fn gen_expr_raw(&mut self, expr: &TExpr) {
+        if let TExprKind::Var(name) = &expr.kind {
+            match name.as_str() {
+                "otherwise" => self.emit("true"),
+                _ => self.emit(&sanitize_name(name)),
+            }
+        } else {
+            self.gen_expr(expr);
+        }
+    }
+
     fn gen_expr(&mut self, expr: &TExpr) {
         match &expr.kind {
             TExprKind::Var(name) => {
                 match name.as_str() {
                     "otherwise" => self.emit("true"),
-                    _ => self.emit(&sanitize_name(name)),
+                    _ => {
+                        self.emit("__force(");
+                        self.emit(&sanitize_name(name));
+                        self.emit(")");
+                    }
                 }
             }
             TExprKind::Con(name) => {
@@ -506,6 +582,20 @@ impl CodeGen {
                             self.emit(", ");
                             self.gen_expr(arg);
                             self.emit(")");
+                            return;
+                        }
+                    }
+                }
+
+                // seq a b => force a, return b
+                if let TExprKind::App(seq_f, seq_a) = &func.kind {
+                    if let TExprKind::Var(name) = &seq_f.kind {
+                        if name == "seq" {
+                            self.emit("(function() __force(");
+                            self.gen_expr(seq_a);
+                            self.emit("); return ");
+                            self.gen_expr(arg);
+                            self.emit(" end)()");
                             return;
                         }
                     }
@@ -533,7 +623,7 @@ impl CodeGen {
                     self.indent += 1;
                     self.emit_indent();
                     self.emit("return ");
-                    self.gen_expr(f);
+                    self.gen_expr_raw(f);
                     self.emit("(");
                     for (i, a) in args.iter().enumerate() {
                         if i > 0 { self.emit(", "); }
@@ -549,11 +639,17 @@ impl CodeGen {
                     self.emit("end)");
                 } else {
                     // Full application
-                    self.gen_expr(f);
+                    self.gen_expr_raw(f);
                     self.emit("(");
                     for (i, a) in args.iter().enumerate() {
                         if i > 0 { self.emit(", "); }
-                        self.gen_expr(a);
+                        if Self::is_cheap(a) {
+                            self.gen_expr(a);
+                        } else {
+                            self.emit("__thunk(function() return ");
+                            self.gen_expr(a);
+                            self.emit(" end)");
+                        }
                     }
                     self.emit(")");
                 }
@@ -568,7 +664,7 @@ impl CodeGen {
                         return;
                     }
                     "$" => {
-                        self.gen_expr(lhs); self.emit("("); self.gen_expr(rhs); self.emit(")");
+                        self.gen_expr(lhs); self.emit("(__thunk(function() return "); self.gen_expr(rhs); self.emit(" end))");
                         return;
                     }
                     ">>=" => {
@@ -613,7 +709,7 @@ impl CodeGen {
             }
             TExprKind::Case { scrutinee, branches } => {
                 self.emit("(function()\n"); self.indent += 1;
-                self.emit_indent(); self.emit("local _s = "); self.gen_expr(scrutinee); self.emit("\n");
+                self.emit_indent(); self.emit("local _s = __force("); self.gen_expr(scrutinee); self.emit(")\n");
                 for (i, branch) in branches.iter().enumerate() {
                     let mut conditions = Vec::new();
                     let mut bindings = Vec::new();
@@ -638,8 +734,14 @@ impl CodeGen {
             TExprKind::Let { binds, body } => {
                 self.emit("(function()\n"); self.indent += 1;
                 for bind in binds {
-                    self.emit_indent(); self.emit(&format!("local {} = ", bind.name));
-                    self.gen_expr(&bind.body); self.emit("\n");
+                    self.emit_indent();
+                    if Self::is_cheap(&bind.body) {
+                        self.emit(&format!("local {} = ", bind.name));
+                        self.gen_expr(&bind.body); self.emit("\n");
+                    } else {
+                        self.emit(&format!("local {} = __thunk(function() return ", bind.name));
+                        self.gen_expr(&bind.body); self.emit(" end)\n");
+                    }
                 }
                 self.emit_indent(); self.emit("return "); self.gen_expr(body); self.emit("\n");
                 self.indent -= 1; self.emit_indent(); self.emit("end)()");
@@ -659,15 +761,18 @@ impl CodeGen {
                     "++" => "..", "&&" => "and", "||" => "or", "/=" => "~=",
                     other => other,
                 };
-                self.emit(&format!("function(_a, _b) return _a {} _b end", lua_op));
+                self.emit(&format!("function(_a, _b) return __force(_a) {} __force(_b) end", lua_op));
             }
             TExprKind::SpecCall { specialized, args, .. } => {
                 // Emit directly — could be a Lua FFI name like "math.sin"
+                // Force all args since FFI expects concrete Lua values
                 self.emit(specialized);
                 self.emit("(");
                 for (i, a) in args.iter().enumerate() {
                     if i > 0 { self.emit(", "); }
+                    self.emit("__force(");
                     self.gen_expr(a);
+                    self.emit(")");
                 }
                 self.emit(")");
             }
@@ -722,6 +827,13 @@ fn sanitize_name(name: &str) -> String {
     match name {
         "main" => "__run".to_string(),
         "return" => "return_".to_string(),
+        "not" => "not_".to_string(),
+        "end" => "end_".to_string(),
+        "then" => "then_".to_string(),
+        "do" => "do_".to_string(),
+        "in" => "in_".to_string(),
+        "or" => "or_".to_string(),
+        "and" => "and_".to_string(),
         "hmEmpty" => "hashmap_empty".to_string(),
         "hmInsert" => "hashmap_insert".to_string(),
         "hmLookup" => "hashmap_lookup".to_string(),
@@ -787,11 +899,26 @@ pub fn generate(module: &TModule) -> String {
 
 const PRELUDE: &str = r#"-- MLL Runtime
 
+-- Thunk infrastructure (non-strict evaluation)
+local __thunk_mt = {}
+local function __thunk(f) return setmetatable({f, false}, __thunk_mt) end
+local function __force(x)
+    if getmetatable(x) == __thunk_mt then
+        if x[2] then return x[1] end
+        local val = x[1]()
+        x[1] = val
+        x[2] = true
+        return val
+    end
+    return x
+end
+
 -- List primitives (internal)
 local function __mll_cons(h, t) return {h, t} end
 local function __mll_lazy_cons(h, thunk) return {h, thunk, __lazy = true} end
-local function __mll_head(l) return l[1] end
+local function __mll_head(l) l = __force(l); return l[1] end
 local function __mll_tail(l)
+    l = __force(l)
     if l.__lazy then
         l[2] = l[2]()
         l.__lazy = nil
@@ -801,13 +928,16 @@ end
 
 -- Run an IO action: if it's a thunk (function), force it; otherwise return as-is
 local function __mll_run(action)
+    action = __force(action)
     if type(action) == "function" then return action() else return action end
 end
 
 -- Primitives that require Lua runtime dispatch
+local function not_(x) return not __force(x) end
 local function engage(f) return f end
 local function liftIO(action) return action end
 local function show(x)
+    x = __force(x)
     if type(x) == "number" then return tostring(x)
     elseif type(x) == "string" then return x
     elseif type(x) == "boolean" then
@@ -830,9 +960,9 @@ local function show(x)
         return "{" .. table.concat(parts, ", ") .. "}"
     else return tostring(x) end
 end
-local function error_(msg) error(msg) end
-local function max(a, b) return math.max(a, b) end
-local function min(a, b) return math.min(a, b) end
+local function error_(msg) error(__force(msg)) end
+local function max(a, b) return math.max(__force(a), __force(b)) end
+local function min(a, b) return math.min(__force(a), __force(b)) end
 local function pure(x) return x end
 local function return_(x) return x end
 local function Just(x) return x end
@@ -843,31 +973,33 @@ local function show_String(x) return show(x) end
 local function show_Bool(x) return show(x) end
 local function show_List_(x) return show(x) end
 local function show_Maybe(x) return show(x) end
-local function eq_Integer(a, b) return a == b end
-local function eq_Number(a, b) return a == b end
-local function eq_String(a, b) return a == b end
-local function eq_Bool(a, b) return a == b end
-local function ord_lt__Integer(a, b) return a < b end
-local function ord_lt__Number(a, b) return a < b end
-local function ord_lt__String(a, b) return a < b end
-local function ord_gt__Integer(a, b) return a > b end
-local function ord_gt__Number(a, b) return a > b end
-local function ord_gt__String(a, b) return a > b end
-local function ord_le__Integer(a, b) return a <= b end
-local function ord_le__Number(a, b) return a <= b end
-local function ord_le__String(a, b) return a <= b end
-local function ord_ge__Integer(a, b) return a >= b end
-local function ord_ge__Number(a, b) return a >= b end
-local function ord_ge__String(a, b) return a >= b end
+local function eq_Integer(a, b) a = __force(a); b = __force(b); return a == b end
+local function eq_Number(a, b) a = __force(a); b = __force(b); return a == b end
+local function eq_String(a, b) a = __force(a); b = __force(b); return a == b end
+local function eq_Bool(a, b) a = __force(a); b = __force(b); return a == b end
+local function ord_lt__Integer(a, b) a = __force(a); b = __force(b); return a < b end
+local function ord_lt__Number(a, b) a = __force(a); b = __force(b); return a < b end
+local function ord_lt__String(a, b) a = __force(a); b = __force(b); return a < b end
+local function ord_gt__Integer(a, b) a = __force(a); b = __force(b); return a > b end
+local function ord_gt__Number(a, b) a = __force(a); b = __force(b); return a > b end
+local function ord_gt__String(a, b) a = __force(a); b = __force(b); return a > b end
+local function ord_le__Integer(a, b) a = __force(a); b = __force(b); return a <= b end
+local function ord_le__Number(a, b) a = __force(a); b = __force(b); return a <= b end
+local function ord_le__String(a, b) a = __force(a); b = __force(b); return a <= b end
+local function ord_ge__Integer(a, b) a = __force(a); b = __force(b); return a >= b end
+local function ord_ge__Number(a, b) a = __force(a); b = __force(b); return a >= b end
+local function ord_ge__String(a, b) a = __force(a); b = __force(b); return a >= b end
 local function head(xs) return __mll_head(xs) end
 local function tail(xs) return __mll_tail(xs) end
 local function map(f, xs)
+    f = __force(f); xs = __force(xs)
     if xs == nil then return nil end
     return __mll_lazy_cons(f(__mll_head(xs)), function()
         return map(f, __mll_tail(xs))
     end)
 end
 local function filter(pred, xs)
+    pred = __force(pred); xs = __force(xs)
     if xs == nil then return nil end
     local h = __mll_head(xs)
     if pred(h) then
@@ -877,29 +1009,31 @@ local function filter(pred, xs)
     end
 end
 local function take(n, xs)
+    n = __force(n); xs = __force(xs)
     if n <= 0 or xs == nil then return nil end
     return __mll_cons(__mll_head(xs), take(n - 1, __mll_tail(xs)))
 end
 local function zipWith(f, xs, ys)
+    f = __force(f); xs = __force(xs); ys = __force(ys)
     if xs == nil or ys == nil then return nil end
     return __mll_lazy_cons(f(__mll_head(xs), __mll_head(ys)), function()
         return zipWith(f, __mll_tail(xs), __mll_tail(ys))
     end)
 end
 -- Hash helper
-local function __mll_hashstr(s) local h = 5381 for i = 1, #s do h = ((h * 33) + string.byte(s, i)) % 2147483647 end return h end
+local function __mll_hashstr(s) s = __force(s); local h = 5381 for i = 1, #s do h = ((h * 33) + string.byte(s, i)) % 2147483647 end return h end
 
 -- HashMap runtime (backed by Lua tables)
 local hashmap_empty = {}
-local function hashmap_insert(k, v, m) local t = {} for a,b in pairs(m) do t[a] = b end t[k] = v return t end
-local function hashmap_lookup(k, m) local v = m[k] if v == nil then return nil else return v end end
-local function hashmap_delete(k, m) local t = {} for a,b in pairs(m) do t[a] = b end t[k] = nil return t end
-local function hashmap_size(m) local n = 0 for _ in pairs(m) do n = n + 1 end return n end
-local function hashmap_keys(m) local r = nil local ks = {} for k in pairs(m) do ks[#ks+1] = k end table.sort(ks) for i = #ks, 1, -1 do r = __mll_cons(ks[i], r) end return r end
-local function hashmap_values(m) local r = nil local ks = {} for k in pairs(m) do ks[#ks+1] = k end table.sort(ks) for i = #ks, 1, -1 do r = __mll_cons(m[ks[i]], r) end return r end
-local function hashmap_member(k, m) return m[k] ~= nil end
-local function show_HashMap(m) local parts = {} for k, v in pairs(m) do parts[#parts+1] = show(k) .. " -> " .. show(v) end table.sort(parts) return "{" .. table.concat(parts, ", ") .. "}" end
-local function hashmap_fromList(xs) local t = {} local cur = xs while cur ~= nil do local pair = __mll_head(cur) t[pair[1]] = pair[2] cur = __mll_tail(cur) end return t end
+local function hashmap_insert(k, v, m) k = __force(k); v = __force(v); m = __force(m); local t = {} for a,b in pairs(m) do t[a] = b end t[k] = v return t end
+local function hashmap_lookup(k, m) k = __force(k); m = __force(m); local v = m[k] if v == nil then return nil else return v end end
+local function hashmap_delete(k, m) k = __force(k); m = __force(m); local t = {} for a,b in pairs(m) do t[a] = b end t[k] = nil return t end
+local function hashmap_size(m) m = __force(m); local n = 0 for _ in pairs(m) do n = n + 1 end return n end
+local function hashmap_keys(m) m = __force(m); local r = nil local ks = {} for k in pairs(m) do ks[#ks+1] = k end table.sort(ks) for i = #ks, 1, -1 do r = __mll_cons(ks[i], r) end return r end
+local function hashmap_values(m) m = __force(m); local r = nil local ks = {} for k in pairs(m) do ks[#ks+1] = k end table.sort(ks) for i = #ks, 1, -1 do r = __mll_cons(m[ks[i]], r) end return r end
+local function hashmap_member(k, m) k = __force(k); m = __force(m); return m[k] ~= nil end
+local function show_HashMap(m) m = __force(m); local parts = {} for k, v in pairs(m) do parts[#parts+1] = show(k) .. " -> " .. show(v) end table.sort(parts) return "{" .. table.concat(parts, ", ") .. "}" end
+local function hashmap_fromList(xs) xs = __force(xs); local t = {} local cur = xs while cur ~= nil do local pair = __mll_head(cur) t[__force(pair[1])] = __force(pair[2]) cur = __mll_tail(cur) end return t end
 
 local function getArgs()
     local result = nil
