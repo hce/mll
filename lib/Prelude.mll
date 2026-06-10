@@ -60,6 +60,10 @@ mapM_ f (x:xs) = f x >> mapM_ f xs
 when :: Bool -> IO () -> IO ()
 when cond action = if cond then action else pure ()
 
+-- Convenience
+print :: Show a => a -> IO ()
+print x = putStrLn (show x)
+
 -- Tuple accessors
 fst :: (a, b) -> a
 fst (x, _) = x
