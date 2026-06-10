@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use crate::ast::*;
 use crate::tir::*;
 use crate::types::*;
@@ -91,6 +91,12 @@ pub struct Checker {
     type_families: HashMap<String, Vec<TypeFamilyEq>>,
     /// Kind table: type constructor name -> kind
     kinds: HashMap<String, Kind>,
+    /// Classes defined in the local module (for orphan detection)
+    local_classes: HashSet<String>,
+    /// Types defined in the local module (for orphan detection)
+    local_types: HashSet<String>,
+    /// Whether orphan instance checking is active
+    orphan_check_enabled: bool,
 }
 
 impl Checker {
@@ -106,6 +112,9 @@ impl Checker {
             record_fields: HashMap::new(),
             type_families: HashMap::new(),
             kinds: HashMap::new(),
+            local_classes: HashSet::new(),
+            local_types: HashSet::new(),
+            orphan_check_enabled: false,
         };
         checker.init_prelude();
         checker.init_kinds();
@@ -782,6 +791,27 @@ impl Checker {
 
     // --- Module checking (produces TIR) ---
 
+    /// Check a module, with orphan instance detection.
+    /// `local_start` is the index into `module.decls` where locally-defined
+    /// declarations begin (everything before is prelude or imported).
+    pub fn check_module_with_local_start(&mut self, module: &Module, local_start: usize) -> TModule {
+        // Collect names defined locally (classes and types)
+        let mut local_classes: HashSet<String> = HashSet::new();
+        let mut local_types: HashSet<String> = HashSet::new();
+        for decl in &module.decls[local_start..] {
+            match decl {
+                Decl::ClassDecl { name, .. } => { local_classes.insert(name.clone()); }
+                Decl::DataDef { name, .. } => { local_types.insert(name.clone()); }
+                Decl::NewtypeDef { name, .. } => { local_types.insert(name.clone()); }
+                _ => {}
+            }
+        }
+        self.local_classes = local_classes;
+        self.local_types = local_types;
+        self.orphan_check_enabled = true;
+        self.check_module(module)
+    }
+
     pub fn check_module(&mut self, module: &Module) -> TModule {
         // Pass 1: register data types and newtypes
         for decl in &module.decls {
@@ -939,6 +969,19 @@ impl Checker {
         });
     }
 
+    /// Extract the head type constructor name from a Type.
+    /// e.g. `Maybe a` -> "Maybe", `Integer` -> "Integer", `[a]` -> "List"
+    fn type_head_name(ty: &Type) -> Option<String> {
+        match ty {
+            Type::Con(name) => Some(name.clone()),
+            Type::App(f, _) => Self::type_head_name(f),
+            Type::List(_) => Some("List".to_string()),
+            Type::IO(_) => Some("IO".to_string()),
+            Type::Paren(inner) => Self::type_head_name(inner),
+            _ => None,
+        }
+    }
+
     fn check_instance(
         &mut self,
         class_name: &str,
@@ -947,6 +990,23 @@ impl Checker {
     ) -> Vec<TFunction> {
         let target_ty = self.ast_type_to_ty(target_type);
         let ty_str = format!("{}", target_ty);
+
+        // Orphan instance detection: either the class or the type must be local.
+        // Only checked when check_module_with_local_start was used (local_start tracking active).
+        if self.orphan_check_enabled {
+            let type_head = Self::type_head_name(target_type);
+            let class_is_local = self.local_classes.contains(class_name);
+            let type_is_local = type_head.as_ref().map_or(false, |t| self.local_types.contains(t));
+            if !class_is_local && !type_is_local {
+                self.push_error_ctx(
+                    TypeErrorKind::Other(format!(
+                        "Orphan instance: neither class '{}' nor type '{}' is defined in this module",
+                        class_name, ty_str
+                    )),
+                    format!("instance {} {}", class_name, ty_str),
+                );
+            }
+        }
 
         let class_info = match self.classes.get(class_name) {
             Some(ci) => ci.clone(),

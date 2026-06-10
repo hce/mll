@@ -74,6 +74,12 @@ pub fn compile(source: &str, source_dir: &Path, lib_paths: &[&Path]) -> Result<C
     }
     let module = loader.resolve_imports(&parsed).map_err(CompileError::Import)?;
 
+    // Count own (non-import) declarations from the parsed source before
+    // import resolution merges everything together.
+    let own_count = parsed.decls.iter()
+        .filter(|d| !matches!(d, ast::Decl::Import { .. }))
+        .count();
+
     // Merge prelude declarations (prepend before user declarations)
     let prelude_decls = parse_prelude()?;
     let mut module = ast::Module {
@@ -81,13 +87,14 @@ pub fn compile(source: &str, source_dir: &Path, lib_paths: &[&Path]) -> Result<C
             .chain(module.decls.into_iter())
             .collect(),
     };
+    let local_start = module.decls.len() - own_count;
 
     // Desugar do-notation to >>= chains
     desugar::desugar_module(&mut module);
 
     // Type check
     let mut checker = typechecker::Checker::new();
-    let tir_module = checker.check_module(&module);
+    let tir_module = checker.check_module_with_local_start(&module, local_start);
 
     if !checker.errors.is_empty() {
         let errors: Vec<String> = checker.errors.iter()

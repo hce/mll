@@ -88,3 +88,23 @@ main = putStrLn (show (Secret 42))
         Ok(_) => panic!("Expected compilation to fail for show without Show instance"),
     }
 }
+
+#[test]
+fn orphan_instance_rejected() {
+    // Show and Integer are both defined in the prelude, not locally.
+    // Defining an instance for them here is an orphan instance.
+    let source = r#"
+instance Show Integer where
+    show x = "int"
+
+main :: IO ()
+main = putStrLn "ok"
+"#;
+    match mllc::compile(source, Path::new("."), &[]) {
+        Err(e) => {
+            let msg = format!("{}", e);
+            assert!(msg.contains("Orphan instance"), "Expected 'Orphan instance' error, got: {}", msg);
+        }
+        Ok(_) => panic!("Expected compilation to fail for orphan instance"),
+    }
+}
