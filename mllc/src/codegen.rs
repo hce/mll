@@ -1164,7 +1164,8 @@ local function show(x)
         end
         local parts = {}
         for i, v in ipairs(x) do parts[i] = show(v) end
-        return "{" .. table.concat(parts, ", ") .. "}"
+        if type(x[1]) == "string" then return x[1] .. "(" .. table.concat(parts, ", ", 2) .. ")"
+        else return "(" .. table.concat(parts, ", ") .. ")" end
     else return tostring(x) end
 end
 local function error_(msg) error(__force(msg)) end
