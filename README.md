@@ -1,7 +1,10 @@
 Modest Attempt at Typesystem Augmenting the Lua Language (mata-ll)
 ==================================================================
 
-Calling from Lua to mata-ll:
+If you make a mistake, the compiler is already there to
+stop you before any harm can spread to the runtime.
+
+Calling from Lua into mata-ll:
 
 | `callfib.lua` | `fib.mll` |
 |---------------|-----------|
@@ -21,10 +24,13 @@ main = do
     putStrLn $ "An integer between 23 and 42: " ++ show randNum2
 ```
 
-## Project goals
+Passing Lua callbacks to mata-ll:
 
-If you make a mistake, the compiler is already there to
-stop you before any harm can spread to the runtime.
+| `callwritefibs.lua` | `writefibs.mll` |
+|---------------------|-----------------|
+| <pre>local wf = require "writefibs"<br>local writer = function(fibString)<br>    print("From mata-ll:", fibString)<br>end<br>wf.writeFibs(writer, 12)</pre> | <pre>export writeFibs :: (String -> LuaIO s ())<br>                 -> Integer -> LuaIO s ()<br>writeFibs writer = loop 1 1<br>  where<br>    loop _ _ 0 = return ()<br>    loop cur next count = do<br>      writer (show cur)<br>      loop next (cur+next) (count-1)</pre> |
+
+## Project goals
 
 Make available a useful subset of modern haskell to Lua. It is not
 intended to be a replacement for haskell, but rather as a way to write
