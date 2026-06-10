@@ -1,12 +1,15 @@
 Modest Attempt at Typesystem Augmenting the Lua Language (mata-ll)
 ==================================================================
 
+Calling from Lua to mata-ll:
+
 | `callfib.lua` | `fib.mll` |
 |---------------|-----------|
 | <pre>local fib = require "fib"<br><br>local fibs = fib.fibonacci(8)<br>for i, n in ipairs(fibs) do<br>    print(i, n)<br>end</pre> | <pre>fib :: [Integer]<br>fib = 1:1:zipWith (+) fib (tail fib)<br><br>export fibonacci :: Integer -> [Integer]<br>fibonacci = flip take fib</pre> |
 
+Calling Lua library functions from mata-ll:
+
 ```haskell
--- random.mll: two lines of FFI, the rest is Haskell
 rr :: LuaIO "math.random" Number
 rr2 :: Integer -> Integer -> LuaIO "math.random" Integer
 
