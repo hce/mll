@@ -207,6 +207,13 @@ impl CodeGen {
 
         if clauses.is_empty() { self.concrete_vars = saved_concrete; return; }
 
+        // Eta-expand: if the function has fewer patterns than type arrows,
+        // add extra params so the Lua function matches the expected arity.
+        // This handles point-free definitions like: f x = g x  (written as f = g)
+        let type_arity = count_arrows(&func.ty);
+        let pat_arity = if clauses[0].patterns.is_empty() { 0 } else { clauses[0].patterns.len() };
+        let eta_count = if type_arity > pat_arity { type_arity - pat_arity } else { 0 };
+
         if clauses.len() == 1 && clauses[0].patterns.is_empty() && clauses[0].guards.is_empty() {
             // Check if this is a value binding (non-function type) or a
             // zero-arg function (IO action / thunk)
@@ -245,7 +252,9 @@ impl CodeGen {
 
         if clauses.len() == 1 && clauses[0].guards.is_empty() {
             let clause = &clauses[0];
-            let params: Vec<String> = (0..clause.patterns.len()).map(|i| format!("_arg{}", i)).collect();
+            let mut params: Vec<String> = (0..clause.patterns.len()).map(|i| format!("_arg{}", i)).collect();
+            let eta_params: Vec<String> = (0..eta_count).map(|i| format!("_eta{}", i)).collect();
+            params.extend(eta_params.iter().cloned());
             let params_str = params.join(", ");
             self.emit_indent();
             self.emit(&self.fn_decl(&lua_name, &params_str));
@@ -260,7 +269,18 @@ impl CodeGen {
                     }
                 }
                 self.gen_where_binds(&clause.where_binds);
-                self.emit_indent(); self.emit("return "); self.gen_expr(&clause.body); self.emit("\n");
+                self.emit_indent(); self.emit("return ");
+                if eta_count > 0 {
+                    // Eta-expand: apply extra params to the body
+                    self.emit("__force(");
+                    self.gen_expr(&clause.body);
+                    self.emit(")(");
+                    self.emit(&eta_params.join(", "));
+                    self.emit(")");
+                } else {
+                    self.gen_expr(&clause.body);
+                }
+                self.emit("\n");
             } else {
                 // Force only args that are destructured
                 for (i, p) in params.iter().enumerate() {
@@ -281,7 +301,9 @@ impl CodeGen {
 
         // Multiple clauses or guards
         let num_params = clauses.iter().map(|c| c.patterns.len()).max().unwrap_or(0);
-        let params: Vec<String> = (0..num_params).map(|i| format!("_arg{}", i)).collect();
+        let mut params: Vec<String> = (0..num_params).map(|i| format!("_arg{}", i)).collect();
+        let eta_params_multi: Vec<String> = (0..eta_count).map(|i| format!("_eta{}", i)).collect();
+        params.extend(eta_params_multi.iter().cloned());
         let params_str = params.join(", ");
         self.emit_indent();
         self.emit(&self.fn_decl(&lua_name, &params_str));
