@@ -2024,9 +2024,22 @@ impl Checker {
             .map(|(n, t)| TExpr::new(TExprKind::Var(n.clone()), t.clone()))
             .collect();
 
+        // Check if return type is a tuple (multi-return from Lua)
+        let tuple_arity = match &ret_ty {
+            Ty::Tuple(elems) => Some(elems.len()),
+            // IO (Tuple ...) — unwrap IO wrapper
+            Ty::App(io, inner) if matches!(io.as_ref(), Ty::Con(c) if c == "IO") => {
+                if let Ty::Tuple(elems) = inner.as_ref() { Some(elems.len()) } else { None }
+            }
+            _ => None,
+        };
+
         let specialized = match ffi_kind {
             FfiKind::Iterator => format!("__mll_iter:{}", lua_name),
             FfiKind::Try => format!("__mll_try:{}", lua_name),
+            _ if tuple_arity.is_some() => {
+                format!("__mll_tup_ret:{}:{}", tuple_arity.unwrap(), lua_name)
+            }
             _ => lua_name.to_string(),
         };
 

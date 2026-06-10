@@ -835,6 +835,27 @@ impl CodeGen {
                     self.emit("__force(");
                     self.gen_expr(&args[0]);
                     self.emit(&format!(")[{}]", idx));
+                } else if let Some(rest) = specialized.strip_prefix("__mll_tup_ret:") {
+                    // Multi-return FFI: pack Lua multiple returns into a tuple table
+                    // Format: __mll_tup_ret:N:lua_func
+                    let parts: Vec<&str> = rest.splitn(2, ':').collect();
+                    let n: usize = parts[0].parse().unwrap();
+                    let lua_func = parts[1];
+                    let vars: Vec<String> = (0..n).map(|i| format!("_r{}", i)).collect();
+                    self.emit("(function() local ");
+                    self.emit(&vars.join(", "));
+                    self.emit(" = ");
+                    self.emit(lua_func);
+                    self.emit("(");
+                    for (i, a) in args.iter().enumerate() {
+                        if i > 0 { self.emit(", "); }
+                        self.emit("__force(");
+                        self.gen_expr(a);
+                        self.emit(")");
+                    }
+                    self.emit("); return {");
+                    self.emit(&vars.join(", "));
+                    self.emit("} end)()");
                 } else if let Some(lua_func) = specialized.strip_prefix("__mll_iter:") {
                     // Iterator FFI: __mll_iter(lua_factory, arg0, arg1, ...)
                     self.emit("__mll_iter(");
