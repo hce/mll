@@ -1,7 +1,8 @@
 -- A pure AVL tree dictionary, using Ord for keys.
 -- Self-balancing: O(log n) insert, lookup, and delete.
 
-data Dict k v = Empty | Node Integer k v (Dict k v) (Dict k v)
+data Dict k v = Empty
+              | Node Integer k v (Dict k v) (Dict k v)
 
 -- The Integer field is the height of the subtree.
 

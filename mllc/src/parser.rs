@@ -188,7 +188,9 @@ impl Parser {
 
         let mut constructors = Vec::new();
         constructors.push(self.parse_constructor()?);
-        while self.at(&Token::Pipe) {
+        loop {
+            self.skip_newlines_and_indent();
+            if !self.at(&Token::Pipe) { break; }
             self.advance();
             constructors.push(self.parse_constructor()?);
         }
