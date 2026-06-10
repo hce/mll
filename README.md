@@ -92,12 +92,12 @@ Lua is primarily focused on embedding. Using normal haskell would
 increase complexity for any project embedding it, which is often not
 feasible.
 
-By writing the compiler in rust but targetting the Lua IR, I am hoping
+By writing the compiler in rust but targeting the Lua IR, I am hoping
 to make it easier to write code that does not require the raw
 performance that rust offers in a haskell-like language.
 
 In addition, type safety allows to catch bugs during compile time,
-which make development with the help of an LLM much easier.
+which makes development with the help of an LLM much easier.
 
 
 ## Language properties:
@@ -107,7 +107,7 @@ File extension should be .mll.
 Each .mll file is a module, just like in haskell.
 
 When compiling an .mll file, included .mll files will be merged into
-the resulting output .o file.
+the resulting output .lua file.
 
 While the language targets the Lua VM and no additional
 runtime is required, there is no need to stay closely compatible otherwise.
