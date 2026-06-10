@@ -883,6 +883,9 @@ local function ord_le__String(a, b) return a <= b end
 local function ord_ge__Integer(a, b) return a >= b end
 local function ord_ge__Number(a, b) return a >= b end
 local function ord_ge__String(a, b) return a >= b end
+-- Hash helper
+local function __mll_hashstr(s) local h = 5381 for i = 1, #s do h = ((h * 33) + string.byte(s, i)) % 2147483647 end return h end
+
 -- HashMap runtime (backed by Lua tables)
 local hashmap_empty = {}
 local function hashmap_insert(k, v, m) local t = {} for a,b in pairs(m) do t[a] = b end t[k] = v return t end
