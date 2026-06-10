@@ -1979,8 +1979,9 @@ impl Checker {
         }
         let ret_ty = current;
 
-        // Zero-arg FFI: constant access (e.g., math.pi), not a function call
-        if arg_types.is_empty() {
+        // Zero-arg Pure FFI: constant access (e.g., math.pi), not a function call.
+        // Zero-arg IO FFI still needs to call the function (e.g., io.flush()).
+        if arg_types.is_empty() && matches!(ffi_kind, FfiKind::Pure) {
             let body = TExpr::new(
                 TExprKind::SpecCall {
                     original: name.to_string(),
