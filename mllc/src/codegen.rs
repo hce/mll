@@ -791,7 +791,12 @@ impl CodeGen {
                 self.emit(&format!("function(_a, _b) return __force(_a) {} __force(_b) end", lua_op));
             }
             TExprKind::SpecCall { specialized, args, .. } => {
-                if let Some(lua_func) = specialized.strip_prefix("__mll_iter:") {
+                if let Some(idx) = specialized.strip_prefix("__mll_tup_get:") {
+                    // Tuple field access: t[N]
+                    self.emit("__force(");
+                    self.gen_expr(&args[0]);
+                    self.emit(&format!(")[{}]", idx));
+                } else if let Some(lua_func) = specialized.strip_prefix("__mll_iter:") {
                     // Iterator FFI: __mll_iter(lua_factory, arg0, arg1, ...)
                     self.emit("__mll_iter(");
                     self.emit(lua_func);

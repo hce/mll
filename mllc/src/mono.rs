@@ -218,9 +218,14 @@ impl Monomorphizer {
                             return TExpr { kind: TExprKind::Var(mangled), ty };
                         } else if let Some(mangled) = self.resolve_parameterized_instance(name, &arg_ty) {
                             return TExpr { kind: TExprKind::Var(mangled), ty };
-                        } else if matches!(arg_ty, Ty::Tuple(_)) && name == "show" {
-                            // Tuples use the generic runtime show function
-                            return TExpr { kind: TExprKind::Var("show".to_string()), ty };
+                        } else if let Ty::Tuple(elem_tys) = &arg_ty {
+                            if name == "show" {
+                                let mangled = self.generate_tuple_show(elem_tys);
+                                return TExpr { kind: TExprKind::Var(mangled), ty };
+                            }
+                            self.errors.push(format!(
+                                "No instance for '{}' on type '{}'", name, ty_str
+                            ));
                         } else {
                             self.errors.push(format!(
                                 "No instance for '{}' on type '{}'", name, ty_str
@@ -374,5 +379,89 @@ impl Monomorphizer {
             other => other,
         };
         TExpr { kind, ty }
+    }
+
+    /// Generate a specialized show function for a tuple type.
+    /// show_(Integer, String) produces: function(t) return "(" .. show_Integer(t[1]) .. ", " .. show_String(t[2]) .. ")" end
+    fn generate_tuple_show(&mut self, elem_tys: &[Ty]) -> String {
+        let tuple_ty = Ty::Tuple(elem_tys.to_vec());
+        let mangled = format!("show_{}", self.ty_to_suffix(&tuple_ty));
+
+        // Check if already generated
+        let key = ("show".to_string(), format!("{}", tuple_ty));
+        if let Some(existing) = self.instance_methods.get(&key) {
+            return existing.clone();
+        }
+        self.instance_methods.insert(key, mangled.clone());
+
+        // Resolve show for each element type
+        let mut elem_show_names = Vec::new();
+        for et in elem_tys {
+            let show_name = if let Some(resolved) = self.instance_methods.get(&("show".to_string(), format!("{}", et))) {
+                resolved.clone()
+            } else {
+                // Fallback to generic show for unknown types
+                "show".to_string()
+            };
+            elem_show_names.push(show_name);
+        }
+
+        // Build body: "(" ++ show_E1(t[1]) ++ ", " ++ show_E2(t[2]) ++ ... ++ ")"
+        // We generate this as a chain of InfixApp(++, ...)
+        let param_name = "_t".to_string();
+        let str_ty = Ty::Con("String".to_string());
+
+        let mut parts: Vec<TExpr> = vec![
+            TExpr::new(TExprKind::Lit(TLiteral::Str("(".to_string())), str_ty.clone()),
+        ];
+        for (i, show_fn) in elem_show_names.iter().enumerate() {
+            if i > 0 {
+                parts.push(TExpr::new(TExprKind::Lit(TLiteral::Str(", ".to_string())), str_ty.clone()));
+            }
+            // show_Elem(t[i+1]) — represented as App(Var(show_fn), SpecCall to access field)
+            let field_access = TExpr::new(
+                TExprKind::SpecCall {
+                    original: format!("_t_{}", i),
+                    specialized: format!("__mll_tup_get:{}", i + 1),
+                    args: vec![TExpr::new(TExprKind::Var(param_name.clone()), tuple_ty.clone())],
+                },
+                elem_tys[i].clone(),
+            );
+            let show_call = TExpr::new(
+                TExprKind::App(
+                    Box::new(TExpr::new(TExprKind::Var(show_fn.clone()), Ty::arrow(elem_tys[i].clone(), str_ty.clone()))),
+                    Box::new(field_access),
+                ),
+                str_ty.clone(),
+            );
+            parts.push(show_call);
+        }
+        parts.push(TExpr::new(TExprKind::Lit(TLiteral::Str(")".to_string())), str_ty.clone()));
+
+        // Chain with ++
+        let body = parts.into_iter().reduce(|acc, part| {
+            TExpr::new(
+                TExprKind::InfixApp {
+                    op: "++".to_string(),
+                    lhs: Box::new(acc),
+                    rhs: Box::new(part),
+                },
+                str_ty.clone(),
+            )
+        }).unwrap();
+
+        let func = TFunction {
+            name: mangled.clone(),
+            ty: Ty::arrow(tuple_ty, str_ty),
+            clauses: vec![TClause {
+                patterns: vec![TPattern::Var(param_name, Ty::Unit)],
+                guards: vec![],
+                body,
+                where_binds: vec![],
+            }],
+            specialized: true,
+        };
+        self.generated.push(func);
+        mangled
     }
 }
