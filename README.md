@@ -1,7 +1,12 @@
 Modest Attempt at Typesystem Augmenting the Lua Language (mata-ll)
 ==================================================================
 
-Project goals:
+| `fib.mll` | `callfib.lua` |
+|-----------|---------------|
+| <pre>fib :: [Integer]<br>fib = 1:1:zipWith (+) fib (tail fib)<br><br>export fibonacci :: Integer -> [Integer]<br>fibonacci = flip take fib</pre> | <pre>local fib = require "fib"<br><br>local fibs = fib.fibonacci(8)<br>for i, n in ipairs(fibs) do<br>    print(i, n)<br>end</pre> |
+
+
+## Project goals
 
 If you make a mistake, the compiler is already there to
 stop you before any harm can spread to the runtime.
@@ -91,16 +96,6 @@ reused to implement the haskell data construct.
 For interacting with non-mll Lua, an FFI interface is provided.
 This interface is used both to call into Lua as well as to export
 functions to Lua.
-
-
-## Example: Calling MLL from Lua
-
-| `fib.mll` | `callfib.lua` |
-|-----------|---------------|
-| <pre>fib :: [Integer]<br>fib = 1:1:zipWith (+) fib (tail fib)<br><br>export fibonacci :: Integer -> [Integer]<br>fibonacci = flip take fib</pre> | <pre>local fib = require "fib"<br><br>local fibs = fib.fibonacci(8)<br>for i, n in ipairs(fibs) do<br>    print(i, n)<br>end</pre> |
-
-Exported functions deep-force their return values: lazy lists become
-plain Lua arrays, thunks are resolved. Lua callers see native values.
 
 ## Evaluation strategy
 
