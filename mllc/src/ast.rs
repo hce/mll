@@ -266,6 +266,8 @@ pub enum Type {
     LuaIterator { lua_name: String, result: Box<Type> },
     /// Tuple type: `(Integer, String, Bool)`
     Tuple(Vec<Type>),
+    /// FFI with Lua error convention: `LuaTry "io.open" FileHandle` reduces to `IO (Either String FileHandle)`
+    LuaTry { lua_name: String, result: Box<Type> },
     /// Typeclass constraint: `Show a =>`
     Constrained {
         constraints: Vec<Constraint>,

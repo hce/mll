@@ -836,6 +836,36 @@ impl CodeGen {
                         self.emit(")");
                     }
                     self.emit(")");
+                } else if let Some(lua_func) = specialized.strip_prefix("__mll_try:") {
+                    // Try FFI: wrap result in Either via __mll_try
+                    self.emit("__mll_try(");
+                    if lua_func.starts_with(':') {
+                        // Method call try: handle:method(args)
+                        let method = &lua_func[1..];
+                        self.emit("__force(");
+                        self.gen_expr(&args[0]);
+                        self.emit(&format!("):{}", method));
+                        self.emit("(");
+                        for (i, a) in args.iter().enumerate().skip(1) {
+                            if i > 1 { self.emit(", "); }
+                            self.emit("__force(");
+                            self.gen_expr(a);
+                            self.emit(")");
+                        }
+                        self.emit(")");
+                    } else {
+                        // Global function try
+                        self.emit(lua_func);
+                        self.emit("(");
+                        for (i, a) in args.iter().enumerate() {
+                            if i > 0 { self.emit(", "); }
+                            self.emit("__force(");
+                            self.gen_expr(a);
+                            self.emit(")");
+                        }
+                        self.emit(")");
+                    }
+                    self.emit(")");
                 } else if let Some(method) = specialized.strip_prefix(':') {
                     // Method call FFI: arg0:method(arg1, arg2, ...)
                     self.emit("__force(");
@@ -1156,6 +1186,12 @@ local function __mll_show_list(elem_show, xs)
         cur = __mll_tail(cur)
     end
     return "[" .. table.concat(parts, ", ") .. "]"
+end
+
+-- Lua error convention wrapper: converts (val, err) to Either String a
+-- Success: Right val, Failure: Left errmsg
+local function __mll_try(val, err)
+    if val == nil then return {1, err or "unknown error"} else return {2, val} end
 end
 
 -- Iterator-to-lazy-list: calls a Lua iterator factory and builds a lazy MLL list.

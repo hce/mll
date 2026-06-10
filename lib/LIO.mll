@@ -12,8 +12,8 @@ readStdin :: String -> LuaIO "io.read" String
 writeStdout :: String -> LuaIO "io.write" ()
 flushStdout :: LuaIO "io.flush" ()
 
--- File open/close
-fOpen :: String -> String -> LuaIO "io.open" FileHandle
+-- File open (returns Either String FileHandle: Left err | Right handle)
+fOpen :: String -> String -> LuaTry "io.open" FileHandle
 fClose :: FileHandle -> LuaIO ":close" ()
 
 -- File methods (handle as first arg, colon-call in Lua)

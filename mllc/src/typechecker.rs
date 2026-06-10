@@ -183,6 +183,11 @@ impl Checker {
             // LuaIterator "name" T  reduces to  [T]
             Type::LuaIterator { result, .. } => Ty::list(self.ast_type_to_ty(result)),
             Type::Tuple(elems) => Ty::Tuple(elems.iter().map(|t| self.ast_type_to_ty(t)).collect()),
+            // LuaTry "name" T  reduces to  IO (Either String T)
+            Type::LuaTry { result, .. } => {
+                let inner = self.ast_type_to_ty(result);
+                Ty::io(Ty::app(Ty::app(Ty::Con("Either".into()), Ty::Con("String".into())), inner))
+            }
         }
     }
 
@@ -2019,9 +2024,9 @@ impl Checker {
             .map(|(n, t)| TExpr::new(TExprKind::Var(n.clone()), t.clone()))
             .collect();
 
-        // For iterators, call __mll_iter(lua_factory, args...)
         let specialized = match ffi_kind {
             FfiKind::Iterator => format!("__mll_iter:{}", lua_name),
+            FfiKind::Try => format!("__mll_try:{}", lua_name),
             _ => lua_name.to_string(),
         };
 
@@ -2069,6 +2074,7 @@ enum FfiKind {
     Pure,
     IO,
     Iterator,
+    Try,
 }
 
 fn extract_ffi_info(ty: &Type) -> Option<(String, FfiKind)> {
@@ -2077,6 +2083,7 @@ fn extract_ffi_info(ty: &Type) -> Option<(String, FfiKind)> {
         Type::LuaPure { lua_name, .. } => Some((lua_name.clone(), FfiKind::Pure)),
         Type::LuaIO { lua_name, .. } => Some((lua_name.clone(), FfiKind::IO)),
         Type::LuaIterator { lua_name, .. } => Some((lua_name.clone(), FfiKind::Iterator)),
+        Type::LuaTry { lua_name, .. } => Some((lua_name.clone(), FfiKind::Try)),
         Type::Paren(inner) => extract_ffi_info(inner),
         _ => None,
     }
