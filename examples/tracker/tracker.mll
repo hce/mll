@@ -9,7 +9,10 @@ outRate :: Integer
 outRate = 44100
 
 clamp :: Integer -> Integer -> Integer -> Integer
-clamp lo hi x = if x < lo then lo else if x > hi then hi else x
+clamp lo hi x =
+    if x < lo then lo
+    else if x > hi then hi
+    else x
 
 nth :: [Integer] -> Integer -> Integer
 nth (x:_) 0 = x
@@ -83,9 +86,12 @@ smpIs16Bit flags = (flags `div` 2) `mod` 2 == 1
 smpHasLoop :: Integer -> Bool
 smpHasLoop flags = (flags `div` 16) `mod` 2 == 1
 
--- Read sample value: 16-bit signed (little-endian) or 8-bit signed
 readSmp :: ByteString -> Integer -> Integer -> Bool -> Integer
-readSmp bs dPtr pos is16 = if is16 then bsGetI16LE bs (dPtr + pos * 2) else let v = bsIndex bs (dPtr + pos) in if v >= 128 then v - 256 else v
+readSmp bs dPtr pos is16 =
+    if is16
+    then bsGetI16LE bs (dPtr + pos * 2)
+    else let v = bsIndex bs (dPtr + pos)
+         in if v >= 128 then v - 256 else v
 
 -- ========== Pattern Headers ==========
 
@@ -118,10 +124,16 @@ pow2 n = 2 * pow2 (n - 1)
 
 -- Returns increment in 8.8 fixed-point (256 = advance 1 sample per frame)
 noteInc :: Integer -> Integer -> Integer
-noteInc note c5 = let oct = (note `div` 12) - 5 in let semi = note `mod` 12 in let base = (c5 * semiRatio semi * 256) `div` (outRate * 65536) in if oct >= 0 then base * pow2 oct else base `div` pow2 (0 - oct)
+noteInc note c5 =
+    let oct  = (note `div` 12) - 5
+        semi = note `mod` 12
+        base = (c5 * semiRatio semi * 256) `div` (outRate * 65536)
+    in if oct >= 0
+       then base * pow2 oct
+       else base `div` pow2 (0 - oct)
 
 -- ========== Channel State (STArray) ==========
--- 14 fields per channel: smp, posH, posL, incH, incL, vol, pan, act, len, lpS, lpE, lp, dPtr, c5
+-- 14 fields per channel packed in a flat array
 
 nf :: Integer
 nf = 14
@@ -129,7 +141,6 @@ nf = 14
 fi :: Integer -> Integer -> Integer
 fi ch f = ch * nf + f
 
--- Field indices
 fiSmp :: Integer
 fiSmp = 0
 fiPos :: Integer
@@ -159,108 +170,219 @@ fiDPtr = 12
 fiC5 :: Integer
 fiC5 = 13
 
--- Init channel state as a flat list (for transfer between ticks)
 mkChan :: Integer -> [Integer]
 mkChan pan = [0, 0, 0, 0, 0, 0, pan, 0, 0, 0, 0, 0, 0, 8363]
 
 initChans :: ByteString -> Integer -> Integer -> [Integer]
-initChans fd n i = if i >= n then [] else let p = getChanPan fd i in let pv = if p >= 128 then 32 else p in appI (mkChan pv) (initChans fd n (i + 1))
+initChans fd n i =
+    if i >= n
+    then []
+    else let p  = getChanPan fd i
+             pv = if p >= 128 then 32 else p
+         in appI (mkChan pv) (initChans fd n (i + 1))
 
--- ========== Pattern Decoding (pure, on [Integer] state) ==========
+-- ========== Pattern Decoding ==========
 
--- lastvals: 4 bytes per channel (note, ins, vol, cmd) × 64 channels = 256 bytes
--- decodeRow returns (newState, (newMasks, (newLastvals, newDataOffset)))
-decodeRow :: ByteString -> Integer -> [Integer] -> ByteString -> ByteString -> Integer -> Integer -> ([Integer], (ByteString, (ByteString, Integer)))
-decodeRow fd off st masks lv numCh numSmp = decRowLoop fd off st masks lv numCh numSmp
+decodeRow :: ByteString -> Integer -> [Integer] -> ByteString
+    -> ByteString -> Integer -> Integer
+    -> ([Integer], (ByteString, (ByteString, Integer)))
+decodeRow fd off st masks lv numCh numSmp =
+    decRowLoop fd off st masks lv numCh numSmp
 
-decRowLoop :: ByteString -> Integer -> [Integer] -> ByteString -> ByteString -> Integer -> Integer -> ([Integer], (ByteString, (ByteString, Integer)))
-decRowLoop fd off st masks lv numCh numSmp = let marker = bsIndex fd off in if marker == 0 then (st, (masks, (lv, off + 1))) else let ch = (marker - 1) `mod` 64 in let hasMaskBit = marker `div` 128 in let off2 = off + 1 in let mask = if hasMaskBit == 1 then bsIndex fd off2 else bsIndex masks ch in let masks2 = if hasMaskBit == 1 then bsSetByte masks ch mask else masks in let off3 = if hasMaskBit == 1 then off2 + 1 else off2 in let b0 = mask `mod` 2 in let b1 = (mask `div` 2) `mod` 2 in let b2 = (mask `div` 4) `mod` 2 in let b3 = (mask `div` 8) `mod` 2 in let b4 = (mask `div` 16) `mod` 2 in let b5 = (mask `div` 32) `mod` 2 in let b6 = (mask `div` 64) `mod` 2 in let note = if b0 == 1 then bsIndex fd off3 else if b4 == 1 then bsIndex lv (ch * 4) else 255 in let off4 = off3 + b0 in let ins = if b1 == 1 then bsIndex fd off4 else if b5 == 1 then bsIndex lv (ch * 4 + 1) else 0 in let off5 = off4 + b1 in let vol = if b2 == 1 then bsIndex fd off5 else if b6 == 1 then bsIndex lv (ch * 4 + 2) else 255 in let off6 = off5 + b2 in let cmd = if b3 == 1 then bsIndex fd off6 else 0 in let cmdVal = if b3 == 1 then bsIndex fd (off6 + 1) else 0 in let off7 = off6 + (if b3 == 1 then 2 else 0) in let lv2 = if b0 == 1 then bsSetByte lv (ch * 4) note else lv in let lv3 = if b1 == 1 then bsSetByte lv2 (ch * 4 + 1) ins else lv2 in let lv4 = if b2 == 1 then bsSetByte lv3 (ch * 4 + 2) vol else lv3 in let st2 = trigNote fd st ch note ins vol cmd cmdVal numSmp in decRowLoop fd off7 st2 masks2 lv4 numCh numSmp
+decRowLoop :: ByteString -> Integer -> [Integer] -> ByteString
+    -> ByteString -> Integer -> Integer
+    -> ([Integer], (ByteString, (ByteString, Integer)))
+decRowLoop fd off st masks lv numCh numSmp =
+    let marker = bsIndex fd off
+    in if marker == 0
+       then (st, (masks, (lv, off + 1)))
+       else let ch   = (marker - 1) `mod` 64
+                hmb  = marker `div` 128
+                off2 = off + 1
+                mask = if hmb == 1 then bsIndex fd off2 else bsIndex masks ch
+                msk2 = if hmb == 1 then bsSetByte masks ch mask else masks
+                off3 = if hmb == 1 then off2 + 1 else off2
+                b0 = mask `mod` 2
+                b1 = (mask `div` 2) `mod` 2
+                b2 = (mask `div` 4) `mod` 2
+                b3 = (mask `div` 8) `mod` 2
+                b4 = (mask `div` 16) `mod` 2
+                b5 = (mask `div` 32) `mod` 2
+                b6 = (mask `div` 64) `mod` 2
+                note = if b0 == 1 then bsIndex fd off3 else if b4 == 1 then bsIndex lv (ch * 4) else 255
+                off4 = off3 + b0
+                ins  = if b1 == 1 then bsIndex fd off4 else if b5 == 1 then bsIndex lv (ch * 4 + 1) else 0
+                off5 = off4 + b1
+                vol  = if b2 == 1 then bsIndex fd off5 else if b6 == 1 then bsIndex lv (ch * 4 + 2) else 255
+                off6 = off5 + b2
+                cmd    = if b3 == 1 then bsIndex fd off6 else 0
+                cmdVal = if b3 == 1 then bsIndex fd (off6 + 1) else 0
+                off7 = off6 + (if b3 == 1 then 2 else 0)
+                lv2 = if b0 == 1 then bsSetByte lv  (ch * 4)     note else lv
+                lv3 = if b1 == 1 then bsSetByte lv2 (ch * 4 + 1) ins  else lv2
+                lv4 = if b2 == 1 then bsSetByte lv3 (ch * 4 + 2) vol  else lv3
+                st2 = trigNote fd st ch note ins vol cmd cmdVal numSmp
+            in decRowLoop fd off7 st2 msk2 lv4 numCh numSmp
 
-trigNote :: ByteString -> [Integer] -> Integer -> Integer -> Integer -> Integer -> Integer -> Integer -> Integer -> [Integer]
-trigNote fd st ch note ins vol cmd cmdVal numSmp = if note == 254 then lset st (fi ch fiAct) 0 else let st2 = if ins > 0 && ins <= numSmp then loadSmp fd st ch ins else st in let st3 = if note < 120 then setNoteFreq st2 ch note else st2 in let st4 = if note < 120 then lset st3 (fi ch fiAct) 1 else st3 in let st5 = applyVol st4 ch vol in applyEffect st5 ch cmd cmdVal
+trigNote :: ByteString -> [Integer] -> Integer -> Integer
+    -> Integer -> Integer -> Integer -> Integer
+    -> Integer -> [Integer]
+trigNote fd st ch note ins vol cmd cmdVal numSmp =
+    if note == 254
+    then lset st (fi ch fiAct) 0
+    else let st2 = if ins > 0 && ins <= numSmp then loadSmp fd st ch ins else st
+             st3 = if note < 120 then setNoteFreq st2 ch note else st2
+             st4 = if note < 120 then lset st3 (fi ch fiAct) 1 else st3
+             st5 = applyVol st4 ch vol
+         in applyEffect st5 ch cmd cmdVal
 
--- Apply volume column: 0-64 = set volume, 128-192 = set panning
 applyVol :: [Integer] -> Integer -> Integer -> [Integer]
-applyVol st ch vol = if vol <= 64 then lset st (fi ch fiVol) vol else if vol >= 128 && vol <= 192 then lset st (fi ch fiPan) (vol - 128) else st
+applyVol st ch vol =
+    if vol <= 64 then lset st (fi ch fiVol) vol
+    else if vol >= 128 && vol <= 192 then lset st (fi ch fiPan) (vol - 128)
+    else st
 
--- Apply effect command
--- Cmd 8 (Xxx) = set panning (0-255 -> 0-64)
--- Cmd 19 (Sxx): S8x = set panning (x * 17 -> 0-255 -> 0-64)
 applyEffect :: [Integer] -> Integer -> Integer -> Integer -> [Integer]
-applyEffect st ch cmd val = if cmd == 8 then lset st (fi ch fiPan) (val `div` 4) else if cmd == 19 && (val `div` 16) == 8 then lset st (fi ch fiPan) (((val `mod` 16) * 17) `div` 4) else st
+applyEffect st ch cmd val =
+    if cmd == 8
+    then lset st (fi ch fiPan) (val `div` 4)
+    else if cmd == 19 && (val `div` 16) == 8
+    then lset st (fi ch fiPan) (((val `mod` 16) * 17) `div` 4)
+    else st
 
 setNoteFreq :: [Integer] -> Integer -> Integer -> [Integer]
-setNoteFreq st ch note = let c5 = nth st (fi ch fiC5) in let inc = noteInc note c5 in lset (lset (lset st (fi ch fiPos) 0) (fi ch fiInc) inc) (fi ch fiAct) 1
+setNoteFreq st ch note =
+    let c5  = nth st (fi ch fiC5)
+        inc = noteInc note c5
+    in lset (lset (lset st (fi ch fiPos) 0) (fi ch fiInc) inc) (fi ch fiAct) 1
 
 loadSmp :: ByteString -> [Integer] -> Integer -> Integer -> [Integer]
-loadSmp fd st ch sn = let off = smpOffset fd (sn - 1) in let sl = smpLen fd off in let lb = smpLoopBegin fd off in let le = smpLoopEnd fd off in let c5 = smpC5Freq fd off in let dp = smpDataPtr fd off in let dv = smpDefaultVol fd off in let gv = smpGlobalVol fd off in let fl = smpFlags fd off in let hl = if smpHasLoop fl then 1 else 0 in let b16 = if smpIs16Bit fl then 1 else 0 in lset (lset (lset (lset (lset (lset (lset (lset (lset (lset st (fi ch fiSmp) sn) (fi ch fiLen) sl) (fi ch fiLpS) lb) (fi ch fiLpE) le) (fi ch fiLp) hl) (fi ch fiDPtr) dp) (fi ch fiC5) c5) (fi ch fiVol) dv) (fi ch fi16) b16) (fi ch fiGVl) gv
+loadSmp fd st ch sn =
+    let off = smpOffset fd (sn - 1)
+        sl  = smpLen fd off
+        lb  = smpLoopBegin fd off
+        le  = smpLoopEnd fd off
+        c5  = smpC5Freq fd off
+        dp  = smpDataPtr fd off
+        dv  = smpDefaultVol fd off
+        gv  = smpGlobalVol fd off
+        fl  = smpFlags fd off
+        hl  = if smpHasLoop fl then 1 else 0
+        b16 = if smpIs16Bit fl then 1 else 0
+    in lset (lset (lset (lset (lset (lset (lset (lset (lset (lset st (fi ch fiSmp) sn) (fi ch fiLen) sl) (fi ch fiLpS) lb) (fi ch fiLpE) le) (fi ch fiLp) hl) (fi ch fiDPtr) dp) (fi ch fiC5) c5) (fi ch fiVol) dv) (fi ch fi16) b16) (fi ch fiGVl) gv
 
 -- ========== Mixing (ST monad for O(1) array access) ==========
 
--- Mix one tick: takes channel state list, returns (pcm, new state list)
-mixTick :: ByteString -> [Integer] -> Integer -> Integer -> (ByteString, [Integer])
+mixTick :: ByteString -> [Integer] -> Integer -> Integer
+    -> (ByteString, [Integer])
 mixTick fd st spt numCh = runST (do
     arr <- newSTArrayFromList st
     pcm <- mixFrames fd arr spt numCh bsEmpty
     st2 <- stArrayToList arr
     return (pcm, st2))
 
-mixFrames :: ByteString -> STArray s -> Integer -> Integer -> ByteString -> ST s ByteString
+mixFrames :: ByteString -> STArray s -> Integer -> Integer
+    -> ByteString -> ST s ByteString
 mixFrames fd arr 0 _ acc = return acc
 mixFrames fd arr n numCh acc = do
     frame <- mixFrame fd arr numCh 0 0 0
-    let l = fst frame
-    let r = snd frame
-    let ml = (l * 48) `div` (128 * 3)
-    let mr = (r * 48) `div` (128 * 3)
+    let l   = fst frame
+    let r   = snd frame
+    let ml  = (l * 48) `div` (128 * 3)
+    let mr  = (r * 48) `div` (128 * 3)
     let pcm = bsConcat (bsPutI16LE (clamp (0 - 32768) 32767 ml)) (bsPutI16LE (clamp (0 - 32768) 32767 mr))
     mixFrames fd arr (n - 1) numCh (bsConcat acc pcm)
 
-mixFrame :: ByteString -> STArray s -> Integer -> Integer -> Integer -> Integer -> ST s (Integer, Integer)
-mixFrame fd arr numCh ch la ra = if ch >= numCh then return (la, ra) else do
-    act <- readSTArray arr (fi ch fiAct)
-    if act == 0 then mixFrame fd arr numCh (ch + 1) la ra else do
-        pos <- readSTArray arr (fi ch fiPos)
-        sl <- readSTArray arr (fi ch fiLen)
-        dp <- readSTArray arr (fi ch fiDPtr)
-        vol <- readSTArray arr (fi ch fiVol)
-        pan <- readSTArray arr (fi ch fiPan)
-        is16 <- readSTArray arr (fi ch fi16)
-        let smpPos = pos `div` 256
-        let smp = if smpPos < sl then readSmp fd dp smpPos (is16 == 1) else 0
-        gvl <- readSTArray arr (fi ch fiGVl)
-        let sv = if is16 == 1 then (smp * vol * gvl * 128) `div` (64 * 64 * 128) else (smp * vol * gvl * 128 * 256) `div` (64 * 64 * 128)
-        let nl = la + (sv * (64 - pan)) `div` 64
-        let nr = ra + (sv * pan) `div` 64
-        advPos arr ch
-        mixFrame fd arr numCh (ch + 1) nl nr
+mixFrame :: ByteString -> STArray s -> Integer -> Integer
+    -> Integer -> Integer -> ST s (Integer, Integer)
+mixFrame fd arr numCh ch la ra =
+    if ch >= numCh
+    then return (la, ra)
+    else do
+        act <- readSTArray arr (fi ch fiAct)
+        if act == 0
+        then mixFrame fd arr numCh (ch + 1) la ra
+        else do
+            pos  <- readSTArray arr (fi ch fiPos)
+            sl   <- readSTArray arr (fi ch fiLen)
+            dp   <- readSTArray arr (fi ch fiDPtr)
+            vol  <- readSTArray arr (fi ch fiVol)
+            pan  <- readSTArray arr (fi ch fiPan)
+            is16 <- readSTArray arr (fi ch fi16)
+            gvl  <- readSTArray arr (fi ch fiGVl)
+            let smpPos = pos `div` 256
+            let smp = if smpPos < sl then readSmp fd dp smpPos (is16 == 1) else 0
+            let sv  = if is16 == 1 then (smp * vol * gvl * 128) `div` (64 * 64 * 128) else (smp * vol * gvl * 128 * 256) `div` (64 * 64 * 128)
+            let nl = la + (sv * (64 - pan)) `div` 64
+            let nr = ra + (sv * pan) `div` 64
+            advPos arr ch
+            mixFrame fd arr numCh (ch + 1) nl nr
 
 advPos :: STArray s -> Integer -> ST s ()
 advPos arr ch = do
     pos <- readSTArray arr (fi ch fiPos)
     inc <- readSTArray arr (fi ch fiInc)
-    sl <- readSTArray arr (fi ch fiLen)
-    hl <- readSTArray arr (fi ch fiLp)
-    ls <- readSTArray arr (fi ch fiLpS)
-    le <- readSTArray arr (fi ch fiLpE)
+    sl  <- readSTArray arr (fi ch fiLen)
+    hl  <- readSTArray arr (fi ch fiLp)
+    ls  <- readSTArray arr (fi ch fiLpS)
+    le  <- readSTArray arr (fi ch fiLpE)
     let nPos = pos + inc
     let slFP = sl * 256
     let lsFP = ls * 256
     let leFP = le * 256
     let fPos = if hl == 1 && nPos >= leFP && leFP > lsFP then lsFP + ((nPos - lsFP) `mod` (leFP - lsFP)) else nPos
     writeSTArray arr (fi ch fiPos) fPos
-    if hl == 0 && nPos >= slFP then writeSTArray arr (fi ch fiAct) 0 else return ()
+    if hl == 0 && nPos >= slFP
+    then writeSTArray arr (fi ch fiAct) 0
+    else return ()
 
 -- ========== Playback Loop (LuaIO for output callback) ==========
 
-doTicks :: ByteString -> (ByteString -> LuaIO s ()) -> [Integer] -> Integer -> Integer -> Integer -> Integer -> LuaIO s [Integer]
-doTicks fd sw st speed spt numCh tick = if tick >= speed then return st else let tr = mixTick fd st spt numCh in let pcm = fst tr in let st2 = snd tr in sw pcm >> doTicks fd sw st2 speed spt numCh (tick + 1)
+doTicks :: ByteString -> (ByteString -> LuaIO s ()) -> [Integer]
+    -> Integer -> Integer -> Integer -> Integer
+    -> LuaIO s [Integer]
+doTicks fd sw st speed spt numCh tick =
+    if tick >= speed
+    then return st
+    else let tr  = mixTick fd st spt numCh
+             pcm = fst tr
+             st2 = snd tr
+         in sw pcm >> doTicks fd sw st2 speed spt numCh (tick + 1)
 
-doRows :: ByteString -> (ByteString -> LuaIO s ()) -> [Integer] -> ByteString -> ByteString -> Integer -> Integer -> Integer -> Integer -> Integer -> Integer -> Integer -> LuaIO s [Integer]
-doRows fd sw st masks lv dataOff row numRows speed tempo numCh numSmp = if row >= numRows then return st else let rr = decodeRow fd dataOff st masks lv numCh numSmp in let st2 = fst rr in let masks2 = fst (snd rr) in let lv2 = fst (snd (snd rr)) in let nextOff = snd (snd (snd rr)) in let spt = (outRate * 60) `div` (tempo * 24) in doTicks fd sw st2 speed spt numCh 0 >>= (\st3 -> doRows fd sw st3 masks2 lv2 nextOff (row + 1) numRows speed tempo numCh numSmp)
+doRows :: ByteString -> (ByteString -> LuaIO s ()) -> [Integer]
+    -> ByteString -> ByteString -> Integer -> Integer
+    -> Integer -> Integer -> Integer -> Integer -> Integer
+    -> LuaIO s [Integer]
+doRows fd sw st masks lv dataOff row numRows speed tempo numCh numSmp =
+    if row >= numRows
+    then return st
+    else let rr      = decodeRow fd dataOff st masks lv numCh numSmp
+             st2     = fst rr
+             masks2  = fst (snd rr)
+             lv2     = fst (snd (snd rr))
+             nextOff = snd (snd (snd rr))
+             spt     = (outRate * 60) `div` (tempo * 24)
+         in doTicks fd sw st2 speed spt numCh 0
+                >>= (\st3 -> doRows fd sw st3 masks2 lv2 nextOff (row + 1) numRows speed tempo numCh numSmp)
 
-doOrders :: ByteString -> (ByteString -> LuaIO s ()) -> [Integer] -> Integer -> Integer -> Integer -> Integer -> Integer -> Integer -> LuaIO s ()
-doOrders fd sw st idx ordNum speed tempo numCh numSmp = if idx >= ordNum then return () else let pat = getOrder fd idx in if pat >= 254 then return () else let pOff = patOffset fd pat in let nRows = patRows fd pOff in let masks = bsReplicate 64 0 in let lv = bsReplicate 256 0 in doRows fd sw st masks lv (pOff + 8) 0 nRows speed tempo numCh numSmp >>= (\st2 -> doOrders fd sw st2 (idx + 1) ordNum speed tempo numCh numSmp)
+doOrders :: ByteString -> (ByteString -> LuaIO s ()) -> [Integer]
+    -> Integer -> Integer -> Integer -> Integer
+    -> Integer -> Integer -> LuaIO s ()
+doOrders fd sw st idx ordNum speed tempo numCh numSmp =
+    if idx >= ordNum
+    then return ()
+    else let pat = getOrder fd idx
+         in if pat >= 254
+            then return ()
+            else let pOff  = patOffset fd pat
+                     nRows = patRows fd pOff
+                     masks = bsReplicate 64 0
+                     lv    = bsReplicate 256 0
+                 in doRows fd sw st masks lv (pOff + 8) 0 nRows speed tempo numCh numSmp
+                        >>= (\st2 -> doOrders fd sw st2 (idx + 1) ordNum speed tempo numCh numSmp)
 
 export play :: (ByteString -> LuaIO s ()) -> ByteString -> LuaIO s ()
-play swallower fd = let numCh = 22 in let st = initChans fd numCh 0 in doOrders fd swallower st 0 (hdrOrdNum fd) (hdrSpeed fd) (hdrTempo fd) numCh (hdrSmpNum fd)
+play swallower fd =
+    let numCh = 22
+        st = initChans fd numCh 0
+    in doOrders fd swallower st 0 (hdrOrdNum fd) (hdrSpeed fd) (hdrTempo fd) numCh (hdrSmpNum fd)
