@@ -385,27 +385,44 @@ emitChunks :: (ByteString -> LuaIO s ()) -> [ByteString] -> LuaIO s ()
 emitChunks sw [] = return ()
 emitChunks sw (c:cs) = sw c >> emitChunks sw cs
 
+findNextPos :: [Integer] -> Integer -> Integer -> Maybe Integer
+findNextPos playedPositions maxPosition n
+    | n < maxPosition = if contains n playedPositions
+                        then findNextPos playedPositions maxPosition (n + 1)
+                        else Just n
+    | otherwise       = Nothing
+
+handleEnd :: ByteString -> (ByteString -> LuaIO s ()) -> [Integer]
+    -> Integer -> Integer -> Integer
+    -> Integer -> Integer -> Bool -> [Integer] -> LuaIO s ()
+handleEnd fd sw st ordNum speed tempo numCh numSmp noLoop playedPositions =
+    if noLoop
+    then case findNextPos playedPositions ordNum 0 of
+        Nothing -> return ()
+        Just newPos -> doOrders fd sw st newPos ordNum speed tempo numCh numSmp noLoop (newPos:playedPositions)
+    else return ()
+
 doOrders :: ByteString -> (ByteString -> LuaIO s ()) -> [Integer]
     -> Integer -> Integer -> Integer -> Integer
-    -> Integer -> Integer -> Bool -> LuaIO s ()
-doOrders fd sw st idx ordNum speed tempo numCh numSmp noLoop =
+    -> Integer -> Integer -> Bool -> [Integer] -> LuaIO s ()
+doOrders fd sw st idx ordNum speed tempo numCh numSmp noLoop playedPositions =
     if idx >= ordNum
     then return ()
     else let pat = getOrder fd idx
          in if pat == 254
-            then doOrders fd sw st (idx + 1) ordNum speed tempo numCh numSmp noLoop
+            then doOrders fd sw st (idx + 1) ordNum speed tempo numCh numSmp noLoop (idx:playedPositions)
             else if pat == 255
-            then if noLoop then return () else return ()
+            then handleEnd fd sw st ordNum speed tempo numCh numSmp noLoop playedPositions
             else let pOff  = patOffset fd pat
                      nRows = patRows fd pOff
                      result = processPattern fd st pOff nRows speed tempo numCh numSmp
                      chunks = fst result
                      st2    = snd result
                  in emitChunks sw (reverse chunks)
-                        >> doOrders fd sw st2 (idx + 1) ordNum speed tempo numCh numSmp noLoop
+                        >> doOrders fd sw st2 (idx + 1) ordNum speed tempo numCh numSmp noLoop (idx:playedPositions)
 
 export play :: (ByteString -> LuaIO s ()) -> ByteString -> Bool -> LuaIO s ()
 play swallower fd noLoop =
     let numCh = 22
-        st = initChans fd numCh 0
-    in doOrders fd swallower st 0 (hdrOrdNum fd) (hdrSpeed fd) (hdrTempo fd) numCh (hdrSmpNum fd) noLoop
+        st    = initChans fd numCh 0
+    in doOrders fd swallower st 0 (hdrOrdNum fd) (hdrSpeed fd) (hdrTempo fd) numCh (hdrSmpNum fd) noLoop []
