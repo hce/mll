@@ -41,6 +41,13 @@ getOrder bs i = bsIndex bs (192 + i)
 getChanPan :: ByteString -> Integer -> Integer
 getChanPan bs ch = bsIndex bs (64 + ch)
 
+countActiveChans :: ByteString -> Integer -> Integer -> Integer
+countActiveChans bs n i =
+    if i >= 64 then n
+    else if getChanPan bs i < 128
+    then countActiveChans bs (n + 1) (i + 1)
+    else countActiveChans bs n (i + 1)
+
 -- ========== Sample Headers ==========
 
 smpOffset :: ByteString -> Integer -> Integer
@@ -435,6 +442,6 @@ play swallower fd noLoop =
     (liftIO $ putStrLn "Pure mata-ll Impulse Tracker decoder") >>
     let offset = findIMPM fd 0
         itData = if offset == 0 then fd else bsSub fd offset (bsLength fd - offset)
-        numCh  = 64
+        numCh  = countActiveChans itData 0 0
         st     = initChans itData numCh 0
     in doOrders itData swallower st 0 (hdrOrdNum itData) (hdrSpeed itData) (hdrTempo itData) numCh (hdrSmpNum itData) noLoop []
