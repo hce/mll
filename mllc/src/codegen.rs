@@ -154,6 +154,9 @@ impl CodeGen {
             self.emit_line(&format!("local {}", all_fn_names.join(", ")));
             for name in &all_fn_names {
                 self.forward_declared.insert(name.clone());
+                // Forward-declared names will all be assigned functions —
+                // mark concrete so references in any function body skip __force
+                self.concrete_vars.insert(name.clone());
             }
         }
 
