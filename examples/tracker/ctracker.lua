@@ -65,8 +65,9 @@ end
 
 local chunk_swallower = mk_process_chunk(output, #arg > 1)
 
+local no_loop = true
 local tracker_data = input:read("a")
-tracker.play(chunk_swallower, tracker_data)
+tracker.play(chunk_swallower, tracker_data, no_loop)
 
 print()
 print("Finished already.")
