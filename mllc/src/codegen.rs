@@ -1512,7 +1512,11 @@ end
 local function take(n, xs)
     n = __force(n); xs = __force(xs)
     if n <= 0 or xs == nil then return nil end
-    return __mll_lazy_cons(__mll_head(xs), function() return take(n - 1, __mll_tail(xs)) end)
+    if xs.__lazy then
+        return __mll_lazy_cons(__mll_head(xs), function() return take(n - 1, __mll_tail(xs)) end)
+    else
+        return __mll_cons(__mll_head(xs), take(n - 1, __mll_tail(xs)))
+    end
 end
 local function zipWith(f, xs, ys)
     f = __force(f); xs = __force(xs); ys = __force(ys)
