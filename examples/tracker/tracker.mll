@@ -69,16 +69,20 @@ smpDataPtr :: ByteString -> Integer -> Integer
 smpDataPtr bs off = bsGetU32LE bs (off + 72)
 
 smpDefaultVol :: ByteString -> Integer -> Integer
-smpDefaultVol bs off = bsIndex bs (off + 18)
+smpDefaultVol bs off = bsIndex bs (off + 19)
 
 smpFlags :: ByteString -> Integer -> Integer
-smpFlags bs off = bsIndex bs (off + 17)
+smpFlags bs off = bsIndex bs (off + 18)
+
+smpIs16Bit :: Integer -> Bool
+smpIs16Bit flags = (flags `div` 2) `mod` 2 == 1
 
 smpHasLoop :: Integer -> Bool
 smpHasLoop flags = (flags `div` 16) `mod` 2 == 1
 
-readSmp8 :: ByteString -> Integer -> Integer -> Integer
-readSmp8 bs dPtr pos = let v = bsIndex bs (dPtr + pos) in if v >= 128 then v - 256 else v
+-- Read sample value: 16-bit signed (little-endian) or 8-bit signed
+readSmp :: ByteString -> Integer -> Integer -> Bool -> Integer
+readSmp bs dPtr pos is16 = if is16 then bsGetI16LE bs (dPtr + pos * 2) else let v = bsIndex bs (dPtr + pos) in if v >= 128 then v - 256 else v
 
 -- ========== Pattern Headers ==========
 
@@ -109,8 +113,9 @@ pow2 :: Integer -> Integer
 pow2 0 = 1
 pow2 n = 2 * pow2 (n - 1)
 
+-- Returns increment in 8.8 fixed-point (256 = advance 1 sample per frame)
 noteInc :: Integer -> Integer -> Integer
-noteInc note c5 = let oct = (note `div` 12) - 5 in let semi = note `mod` 12 in let base = (c5 * semiRatio semi) `div` outRate in if oct >= 0 then (base * pow2 oct) `div` 65536 else base `div` (pow2 (0 - oct) * 65536)
+noteInc note c5 = let oct = (note `div` 12) - 5 in let semi = note `mod` 12 in let base = (c5 * semiRatio semi * 256) `div` (outRate * 65536) in if oct >= 0 then base * pow2 oct else base `div` pow2 (0 - oct)
 
 -- ========== Channel State (STArray) ==========
 -- 14 fields per channel: smp, posH, posL, incH, incL, vol, pan, act, len, lpS, lpE, lp, dPtr, c5
@@ -126,6 +131,8 @@ fiSmp :: Integer
 fiSmp = 0
 fiPos :: Integer
 fiPos = 1
+fi16 :: Integer
+fi16 = 2
 fiInc :: Integer
 fiInc = 3
 fiVol :: Integer
@@ -149,7 +156,7 @@ fiC5 = 13
 
 -- Init channel state as a flat list (for transfer between ticks)
 mkChan :: Integer -> [Integer]
-mkChan pan = [0, 0, 0, 0, 0, pan, 0, 0, 0, 0, 0, 0, 0, 8363]
+mkChan pan = [0, 0, 0, 0, 0, 0, pan, 0, 0, 0, 0, 0, 0, 8363]
 
 initChans :: ByteString -> Integer -> Integer -> [Integer]
 initChans fd n i = if i >= n then [] else let p = getChanPan fd i in let pv = if p >= 128 then 32 else p in appI (mkChan pv) (initChans fd n (i + 1))
@@ -169,7 +176,7 @@ setNoteFreq :: [Integer] -> Integer -> Integer -> [Integer]
 setNoteFreq st ch note = let c5 = nth st (fi ch fiC5) in let inc = noteInc note c5 in lset (lset (lset st (fi ch fiPos) 0) (fi ch fiInc) inc) (fi ch fiAct) 1
 
 loadSmp :: ByteString -> [Integer] -> Integer -> Integer -> [Integer]
-loadSmp fd st ch sn = let off = smpOffset fd (sn - 1) in let sl = smpLen fd off in let lb = smpLoopBegin fd off in let le = smpLoopEnd fd off in let c5 = smpC5Freq fd off in let dp = smpDataPtr fd off in let dv = smpDefaultVol fd off in let fl = smpFlags fd off in let hl = if smpHasLoop fl then 1 else 0 in lset (lset (lset (lset (lset (lset (lset (lset st (fi ch fiSmp) sn) (fi ch fiLen) sl) (fi ch fiLpS) lb) (fi ch fiLpE) le) (fi ch fiLp) hl) (fi ch fiDPtr) dp) (fi ch fiC5) c5) (fi ch fiVol) dv
+loadSmp fd st ch sn = let off = smpOffset fd (sn - 1) in let sl = smpLen fd off in let lb = smpLoopBegin fd off in let le = smpLoopEnd fd off in let c5 = smpC5Freq fd off in let dp = smpDataPtr fd off in let dv = smpDefaultVol fd off in let fl = smpFlags fd off in let hl = if smpHasLoop fl then 1 else 0 in let b16 = if smpIs16Bit fl then 1 else 0 in lset (lset (lset (lset (lset (lset (lset (lset (lset st (fi ch fiSmp) sn) (fi ch fiLen) sl) (fi ch fiLpS) lb) (fi ch fiLpE) le) (fi ch fiLp) hl) (fi ch fiDPtr) dp) (fi ch fiC5) c5) (fi ch fiVol) dv) (fi ch fi16) b16
 
 -- ========== Mixing (ST monad for O(1) array access) ==========
 
@@ -199,8 +206,11 @@ mixFrame fd arr numCh ch la ra = if ch >= numCh then return (la, ra) else do
         dp <- readSTArray arr (fi ch fiDPtr)
         vol <- readSTArray arr (fi ch fiVol)
         pan <- readSTArray arr (fi ch fiPan)
-        let smp = if pos < sl then readSmp8 fd dp pos else 0
-        let sv = smp * vol * 4
+        is16 <- readSTArray arr (fi ch fi16)
+        let smpPos = pos `div` 256
+        let smp = if smpPos < sl then readSmp fd dp smpPos (is16 == 1) else 0
+        let scaled = if is16 == 1 then smp `div` 256 else smp
+        let sv = scaled * vol * 4
         let nl = la + (sv * (64 - pan)) `div` 64
         let nr = ra + (sv * pan) `div` 64
         advPos arr ch
@@ -215,9 +225,12 @@ advPos arr ch = do
     ls <- readSTArray arr (fi ch fiLpS)
     le <- readSTArray arr (fi ch fiLpE)
     let nPos = pos + inc
-    let fPos = if hl == 1 && nPos >= le && le > ls then ls + ((nPos - ls) `mod` (le - ls)) else nPos
+    let slFP = sl * 256
+    let lsFP = ls * 256
+    let leFP = le * 256
+    let fPos = if hl == 1 && nPos >= leFP && leFP > lsFP then lsFP + ((nPos - lsFP) `mod` (leFP - lsFP)) else nPos
     writeSTArray arr (fi ch fiPos) fPos
-    if hl == 0 && fPos >= sl then writeSTArray arr (fi ch fiAct) 0 else return ()
+    if hl == 0 && nPos >= slFP then writeSTArray arr (fi ch fiAct) 0 else return ()
 
 -- ========== Playback Loop (LuaIO for output callback) ==========
 
