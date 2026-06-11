@@ -49,6 +49,10 @@ impl Monomorphizer {
             "engage", "liftIO", ">>=", ">>", "return", "pure",
             "hmEmpty", "hmInsert", "hmLookup", "hmDelete",
             "hmSize", "hmKeys", "hmValues", "hmMember",
+            "bsEmpty", "bsLength", "bsIndex", "bsSub", "bsSingleton",
+            "bsConcat", "bsNull", "bsHead", "bsTail", "bsCons", "bsSnoc",
+            "bsReplicate", "bsPack", "bsUnpack", "bsMap", "bsFoldl",
+            "bsXor", "bsZipWith", "bsToString", "bsFromString",
         ] {
             builtins.insert(name.to_string());
         }

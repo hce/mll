@@ -112,6 +112,7 @@ impl CodeGen {
         // mutual recursion and specialization ordering
         let all_fn_names: Vec<String> = module.functions.iter()
             .map(|f| sanitize_name(&f.name))
+            .filter(|n| !n.starts_with("__mll_"))  // preamble builtins are already local
             .collect();
         if all_fn_names.len() > 1 {
             self.emit_line(&format!("local {}", all_fn_names.join(", ")));
@@ -1107,6 +1108,26 @@ fn sanitize_name(name: &str) -> String {
         "in" => "in_".to_string(),
         "or" => "or_".to_string(),
         "and" => "and_".to_string(),
+        "bsEmpty" => "__mll_bs_empty".to_string(),
+        "bsLength" => "__mll_bs[1]".to_string(),
+        "bsIndex" => "__mll_bs[2]".to_string(),
+        "bsSub" => "__mll_bs[3]".to_string(),
+        "bsSingleton" => "__mll_bs[4]".to_string(),
+        "bsConcat" => "__mll_bs[5]".to_string(),
+        "bsNull" => "__mll_bs[6]".to_string(),
+        "bsHead" => "__mll_bs[7]".to_string(),
+        "bsTail" => "__mll_bs[8]".to_string(),
+        "bsCons" => "__mll_bs[9]".to_string(),
+        "bsSnoc" => "__mll_bs[10]".to_string(),
+        "bsReplicate" => "__mll_bs[11]".to_string(),
+        "bsPack" => "__mll_bs[12]".to_string(),
+        "bsUnpack" => "__mll_bs[13]".to_string(),
+        "bsMap" => "__mll_bs[14]".to_string(),
+        "bsFoldl" => "__mll_bs[15]".to_string(),
+        "bsXor" => "__mll_bs[16]".to_string(),
+        "bsZipWith" => "__mll_bs[17]".to_string(),
+        "bsToString" => "__mll_bs[18]".to_string(),
+        "bsFromString" => "__mll_bs[19]".to_string(),
         "hmEmpty" => "hashmap_empty".to_string(),
         "hmInsert" => "hashmap_insert".to_string(),
         "hmLookup" => "hashmap_lookup".to_string(),
@@ -1434,4 +1455,59 @@ local function __mll_array_from_list(xs)
 end
 local function __mll_array_index(arr, i) return __force(arr)[__force(i) + 1] end
 local function __mll_array_length(arr) return #__force(arr) end
+
+-- ByteString runtime (backed by Lua strings)
+-- All indices are 0-based in MLL, converted to 1-based for Lua internally.
+local __mll_bs_empty = ""
+local __mll_bs; do
+    local F = __force
+    local sb, sc, sr, ss = string.byte, string.char, string.rep, string.sub
+    __mll_bs = {
+        function(s) return #F(s) end,                                           -- [1] length
+        function(s, i) return sb(F(s), F(i) + 1) end,                          -- [2] index
+        function(s, i, len) s=F(s); i=F(i); len=F(len); return ss(s, i+1, i+len) end, -- [3] sub
+        function(b) return sc(F(b)) end,                                        -- [4] singleton
+        function(a, b) return F(a) .. F(b) end,                                -- [5] concat
+        function(s) return #F(s) == 0 end,                                      -- [6] null
+        function(s) return sb(F(s), 1) end,                                     -- [7] head
+        function(s) return ss(F(s), 2) end,                                     -- [8] tail
+        function(b, s) return sc(F(b)) .. F(s) end,                             -- [9] cons
+        function(s, b) return F(s) .. sc(F(b)) end,                             -- [10] snoc
+        function(n, b) return sr(sc(F(b)), F(n)) end,                           -- [11] replicate
+        function(xs)                                                             -- [12] pack
+            xs = F(xs); local t = {}; local cur = xs
+            while cur ~= nil do t[#t+1] = sc(F(__mll_head(cur))); cur = __mll_tail(cur) end
+            return table.concat(t)
+        end,
+        function(s)                                                              -- [13] unpack
+            s = F(s); local r = nil
+            for i = #s, 1, -1 do r = __mll_cons(sb(s, i), r) end
+            return r
+        end,
+        function(f, s)                                                           -- [14] map
+            f=F(f); s=F(s); local t = {}
+            for i = 1, #s do t[i] = sc(F(f)(sb(s, i))) end
+            return table.concat(t)
+        end,
+        function(f, acc, s)                                                      -- [15] foldl
+            f=F(f); acc=F(acc); s=F(s)
+            for i = 1, #s do local b=sb(s,i); local r=F(f)(acc,b); if r==nil then r=F(F(f)(acc))(b) end; acc=F(r) end
+            return acc
+        end,
+        function(a, b)                                                           -- [16] xor
+            a=F(a); b=F(b); local t = {}
+            for i = 1, #a do t[i] = sc(sb(a, i) ~ sb(b, i)) end
+            return table.concat(t)
+        end,
+        function(f, a, b)                                                        -- [17] zipwith
+            f=F(f); a=F(a); b=F(b); local len=math.min(#a, #b); local t = {}
+            for i = 1, len do local ba,bb=sb(a,i),sb(b,i); local r=F(f)(ba,bb); if r==nil then r=F(F(f)(ba))(bb) end; t[i]=sc(F(r)) end
+            return table.concat(t)
+        end,
+        function(s) return F(s) end,                                             -- [18] tostring
+        function(s) return F(s) end,                                             -- [19] fromstring
+    }
+end
+local function show_ByteString(s) s = __force(s); local t = {} for i = 1, #s do t[i] = string.format("%02x", string.byte(s, i)) end return "ByteString " .. table.concat(t) end
+local function eq_ByteString(a, b) return __force(a) == __force(b) end
 "#;

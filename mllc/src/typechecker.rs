@@ -403,6 +403,36 @@ impl Checker {
             self.env.insert(name.into(), Scheme { vars, ty });
         }
 
+        // ByteString operations (backed by Lua strings as byte arrays)
+        let bs = Ty::Con("ByteString".into());
+        let int = Ty::Con("Integer".into());
+        let bool_ = Ty::Con("Bool".into());
+        let bs_entries: Vec<(&str, Vec<TyVar>, Ty)> = vec![
+            ("bsEmpty",     vec![], bs.clone()),
+            ("bsLength",    vec![], Ty::arrow(bs.clone(), int.clone())),
+            ("bsIndex",     vec![], Ty::fun(&[bs.clone(), int.clone()], int.clone())),
+            ("bsSub",       vec![], Ty::fun(&[bs.clone(), int.clone(), int.clone()], bs.clone())),
+            ("bsSingleton", vec![], Ty::arrow(int.clone(), bs.clone())),
+            ("bsConcat",    vec![], Ty::fun(&[bs.clone(), bs.clone()], bs.clone())),
+            ("bsNull",      vec![], Ty::arrow(bs.clone(), bool_.clone())),
+            ("bsHead",      vec![], Ty::arrow(bs.clone(), int.clone())),
+            ("bsTail",      vec![], Ty::arrow(bs.clone(), bs.clone())),
+            ("bsCons",      vec![], Ty::fun(&[int.clone(), bs.clone()], bs.clone())),
+            ("bsSnoc",      vec![], Ty::fun(&[bs.clone(), int.clone()], bs.clone())),
+            ("bsReplicate", vec![], Ty::fun(&[int.clone(), int.clone()], bs.clone())),
+            ("bsPack",      vec![], Ty::arrow(Ty::list(int.clone()), bs.clone())),
+            ("bsUnpack",    vec![], Ty::arrow(bs.clone(), Ty::list(int.clone()))),
+            ("bsMap",       vec![], Ty::fun(&[Ty::arrow(int.clone(), int.clone()), bs.clone()], bs.clone())),
+            ("bsFoldl",     vec![a.clone()], Ty::fun(&[Ty::fun(&[ta.clone(), int.clone()], ta.clone()), ta.clone(), bs.clone()], ta.clone())),
+            ("bsXor",       vec![], Ty::fun(&[bs.clone(), bs.clone()], bs.clone())),
+            ("bsZipWith",   vec![], Ty::fun(&[Ty::fun(&[int.clone(), int.clone()], int.clone()), bs.clone(), bs.clone()], bs.clone())),
+            ("bsToString",  vec![], Ty::arrow(bs.clone(), Ty::Con("String".into()))),
+            ("bsFromString", vec![], Ty::arrow(Ty::Con("String".into()), bs.clone())),
+        ];
+        for (name, vars, ty) in bs_entries {
+            self.env.insert(name.into(), Scheme { vars, ty });
+        }
+
         for name in &["max", "min"] {
             self.env.insert(name.to_string(), Scheme { vars: vec![a.clone()], ty: Ty::fun(&[ta.clone(), ta.clone()], ta.clone()) });
         }
@@ -528,7 +558,7 @@ impl Checker {
         });
 
         // Eq instances for base types
-        for type_name in &["Integer", "Number", "String", "Bool"] {
+        for type_name in &["Integer", "Number", "String", "Bool", "ByteString"] {
             let target = Ty::Con(type_name.to_string());
             let mangled = format!("eq_{}", type_name);
             let mut method_fns = HashMap::new();
@@ -564,7 +594,7 @@ impl Checker {
         }
 
         // Ord instances for base types
-        for type_name in &["Integer", "Number", "String"] {
+        for type_name in &["Integer", "Number", "String", "ByteString"] {
             let target = Ty::Con(type_name.to_string());
             let mut method_fns = HashMap::new();
             for op in &["<", ">", "<=", ">="] {
@@ -581,7 +611,7 @@ impl Checker {
         }
 
         // Show instances for base types and parameterized types
-        for type_name in &["Integer", "Number", "String", "Bool", "[]", "Maybe"] {
+        for type_name in &["Integer", "Number", "String", "Bool", "[]", "Maybe", "ByteString"] {
             let target = Ty::Con(type_name.to_string());
             let mangled = format!("show_{}", type_name);
             let mut method_fns = HashMap::new();
@@ -599,7 +629,7 @@ impl Checker {
 
     fn init_kinds(&mut self) {
         // Base types: kind Type
-        for name in &["Integer", "Number", "String", "Bool", "()"] {
+        for name in &["Integer", "Number", "String", "Bool", "()", "ByteString"] {
             self.kinds.insert(name.to_string(), Kind::Type);
         }
         // Type constructors: kind Type -> Type
