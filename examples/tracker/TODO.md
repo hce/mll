@@ -1,6 +1,13 @@
 Tracker performance TODO
 ========================
 
+"All function parameters are forced once at entry and marked concrete, eliminating repeated __force calls throughout the body"
+ -- I think this one breaks some important semantics, such as implementing custom if blocks
+
+"Monadic bind continuations (>>= with a lambda) mark their parameters concrete, since __mll_run always produces a forced value."
+ -- This, too, may break things. What about, for example: "expensivePureComputation <$> getLine :: IO SomeResult"?
+
+
 Current: 121s of audio rendered in 315s (2.6× slower than real-time).
 Target: real-time on commodity hardware.
 
