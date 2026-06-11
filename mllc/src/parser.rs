@@ -870,8 +870,10 @@ impl Parser {
 
     fn parse_type_arrow(&mut self) -> Result<Type, String> {
         let lhs = self.parse_type_app()?;
+        self.skip_newlines_and_indent();
         if self.at(&Token::Arrow) {
             self.advance();
+            self.skip_newlines_and_indent();
             let rhs = self.parse_type_arrow()?;
             Ok(Type::Arrow(Box::new(lhs), Box::new(rhs)))
         } else {
@@ -1346,8 +1348,10 @@ impl Parser {
             Token::If => {
                 self.advance();
                 let cond = self.parse_expr()?;
+                self.skip_newlines_and_indent();
                 self.expect(&Token::Then)?;
                 let then_branch = self.parse_expr()?;
+                self.skip_newlines_and_indent();
                 self.expect(&Token::Else)?;
                 let else_branch = self.parse_expr()?;
                 Ok(Expr::If {
@@ -1430,6 +1434,7 @@ impl Parser {
                     binds.push(LocalDef { name, patterns, body });
                 }
 
+                self.skip_newlines_and_indent();
                 self.expect(&Token::In)?;
                 self.skip_newlines_and_indent();
                 let body = self.parse_expr()?;
