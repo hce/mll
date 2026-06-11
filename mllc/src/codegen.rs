@@ -15,6 +15,9 @@ struct CodeGen {
     /// positions are always passed cheap (non-thunk) arguments at every call site.
     /// If true, the param never needs __force at entry.
     params_always_cheap: std::collections::HashMap<String, Vec<bool>>,
+    /// Small pure functions eligible for inlining at call sites.
+    /// Maps function name to (param_names, body).
+    inline_fns: std::collections::HashMap<String, (Vec<String>, TExpr)>,
     output: String,
     indent: usize,
 }
@@ -26,6 +29,7 @@ impl CodeGen {
             forward_declared: std::collections::HashSet::new(),
             concrete_vars: std::collections::HashSet::new(),
             params_always_cheap: std::collections::HashMap::new(),
+            inline_fns: std::collections::HashMap::new(),
             output: String::new(), indent: 0,
         }
     }
@@ -163,6 +167,9 @@ impl CodeGen {
         // Whole-program call-site analysis: determine which function params
         // are always passed cheap (non-thunk) arguments at every call site.
         self.analyze_call_sites(module);
+
+        // Identify small pure functions eligible for inlining
+        self.find_inline_candidates(module);
 
         // Emit functions (main last, so specializations are defined before use)
         let mut main_fn = None;
@@ -346,18 +353,18 @@ impl CodeGen {
                     }
                 }
                 self.gen_where_binds(&clause.where_binds);
-                self.emit_indent(); self.emit("return ");
                 if eta_count > 0 {
                     // Eta-expand: apply extra params to the body
-                    self.emit("__force(");
+                    self.emit_indent(); self.emit("return __force(");
                     self.gen_expr(&clause.body);
                     self.emit(")(");
                     self.emit(&eta_params.join(", "));
-                    self.emit(")");
+                    self.emit(")\n");
                 } else {
-                    self.gen_expr(&clause.body);
+                    // Use gen_bind_chain for the body so If/>>=/>> flatten
+                    // into statements instead of IIFEs
+                    self.gen_bind_chain(&clause.body);
                 }
-                self.emit("\n");
             } else {
                 // Force only args that are destructured
                 for (i, p) in params.iter().enumerate() {
@@ -821,6 +828,105 @@ impl CodeGen {
         }
     }
 
+    /// Identify small pure functions eligible for inlining at call sites.
+    /// Criteria: single clause, all-simple patterns, no guards, no where bindings,
+    /// body is cheap, and not self-recursive.
+    fn find_inline_candidates(&mut self, module: &TModule) {
+        for func in module.functions.iter().chain(module.instance_fns.iter()) {
+            if func.clauses.len() != 1 { continue; }
+            let clause = &func.clauses[0];
+            if !clause.guards.is_empty() || !clause.where_binds.is_empty() { continue; }
+            if clause.patterns.is_empty() { continue; } // value binding, not a function
+            let all_simple = clause.patterns.iter().all(|p| matches!(p, TPattern::Var(_, _)));
+            if !all_simple { continue; }
+            if !Self::is_cheap(&clause.body) { continue; }
+            if expr_references_name(&clause.body, &func.name) { continue; } // recursive
+            // Only inline bodies that are arithmetic/comparison expressions,
+            // not constructor applications (which need special gen_expr handling)
+            if Self::body_has_constructors(&clause.body) { continue; }
+            let params: Vec<String> = clause.patterns.iter().map(|p| {
+                if let TPattern::Var(name, _) = p { name.clone() } else { unreachable!() }
+            }).collect();
+            self.inline_fns.insert(func.name.clone(), (params, clause.body.clone()));
+        }
+    }
+
+    /// Check if an expression contains constructor applications (Con nodes).
+    /// These need special handling in gen_expr (e.g. : → __mll_cons) that
+    /// gen_expr_subst doesn't replicate, so we skip inlining for them.
+    fn body_has_constructors(expr: &TExpr) -> bool {
+        match &expr.kind {
+            TExprKind::Con(_) => true,
+            TExprKind::App(f, a) => Self::body_has_constructors(f) || Self::body_has_constructors(a),
+            TExprKind::InfixApp { lhs, rhs, .. } => Self::body_has_constructors(lhs) || Self::body_has_constructors(rhs),
+            TExprKind::Paren(inner) | TExprKind::Negate(inner) => Self::body_has_constructors(inner),
+            TExprKind::Tuple(elems) => elems.iter().any(|e| Self::body_has_constructors(e)),
+            _ => false,
+        }
+    }
+
+    /// Emit an expression with parameter substitution for inlining.
+    /// Only recurses into sub-expressions that might contain substitution
+    /// variables; delegates to gen_expr for everything else.
+    fn gen_expr_subst(&mut self, expr: &TExpr, subst: &std::collections::HashMap<String, &TExpr>) {
+        // If no substitution vars appear in this expr, use normal gen_expr
+        // (which handles cons, list literals, etc. correctly)
+        let has_subst_vars = subst.keys().any(|k| expr_references_name(expr, k));
+        if !has_subst_vars {
+            self.gen_expr(expr);
+            return;
+        }
+        match &expr.kind {
+            TExprKind::Var(name) => {
+                if let Some(replacement) = subst.get(name.as_str()) {
+                    self.gen_expr(replacement);
+                } else {
+                    self.gen_expr(expr);
+                }
+            }
+            TExprKind::InfixApp { op, lhs, rhs } => {
+                let lua_op = match op.as_str() {
+                    "++" => "..", "&&" => "and", "||" => "or", "/=" => "~=",
+                    "div" => "//", "mod" => "%",
+                    other => other,
+                };
+                self.emit("(");
+                self.gen_expr_subst(lhs, subst);
+                self.emit(&format!(" {} ", lua_op));
+                self.gen_expr_subst(rhs, subst);
+                self.emit(")");
+            }
+            TExprKind::Paren(inner) => {
+                self.emit("(");
+                self.gen_expr_subst(inner, subst);
+                self.emit(")");
+            }
+            TExprKind::Negate(inner) => {
+                self.emit("(-");
+                self.gen_expr_subst(inner, subst);
+                self.emit(")");
+            }
+            TExprKind::App(_, _) => {
+                // Collect the application chain, substituting as we go
+                let mut args: Vec<&TExpr> = vec![];
+                let mut f = expr;
+                while let TExprKind::App(inner_f, inner_arg) = &f.kind {
+                    args.push(inner_arg.as_ref());
+                    f = inner_f.as_ref();
+                }
+                args.reverse();
+                self.gen_expr_subst(f, subst);
+                self.emit("(");
+                for (i, a) in args.iter().enumerate() {
+                    if i > 0 { self.emit(", "); }
+                    self.gen_expr_subst(a, subst);
+                }
+                self.emit(")");
+            }
+            _ => self.gen_expr(expr),
+        }
+    }
+
     /// Like is_cheap but also treats function applications with cheap
     /// sub-expressions as cheap. Safe for function arguments where the
     /// callee will force the value immediately — avoids thunk allocation
@@ -1071,6 +1177,22 @@ impl CodeGen {
                             self.gen_expr(args[0]);
                             self.emit(&format!(" {} ", op));
                             self.gen_expr(args[1]);
+                            self.emit(")");
+                            return;
+                        }
+                    }
+                }
+
+                // Inline small pure functions at call site
+                if let TExprKind::Var(name) = &f.kind {
+                    if let Some((params, body)) = self.inline_fns.get(name).cloned() {
+                        if args.len() == params.len() {
+                            let mut subst = std::collections::HashMap::new();
+                            for (param, arg) in params.iter().zip(args.iter()) {
+                                subst.insert(param.clone(), *arg);
+                            }
+                            self.emit("(");
+                            self.gen_expr_subst(&body, &subst);
                             self.emit(")");
                             return;
                         }
