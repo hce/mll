@@ -414,6 +414,7 @@ impl Checker {
             ("bsSub",       vec![], Ty::fun(&[bs.clone(), int.clone(), int.clone()], bs.clone())),
             ("bsSingleton", vec![], Ty::arrow(int.clone(), bs.clone())),
             ("bsConcat",    vec![], Ty::fun(&[bs.clone(), bs.clone()], bs.clone())),
+            ("bsConcatList", vec![], Ty::arrow(Ty::list(bs.clone()), bs.clone())),
             ("bsNull",      vec![], Ty::arrow(bs.clone(), bool_.clone())),
             ("bsHead",      vec![], Ty::arrow(bs.clone(), int.clone())),
             ("bsTail",      vec![], Ty::arrow(bs.clone(), bs.clone())),

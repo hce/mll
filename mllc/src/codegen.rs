@@ -204,7 +204,6 @@ impl CodeGen {
         let lua_name = sanitize_name(&func.name);
         let clauses = &func.clauses;
         let saved_concrete = self.concrete_vars.clone();
-        self.concrete_vars.clear();
 
         if clauses.is_empty() { self.concrete_vars = saved_concrete; return; }
 
@@ -220,6 +219,7 @@ impl CodeGen {
             // zero-arg function (IO action / thunk)
             let is_io_action = matches!(&func.ty, Ty::IO(_) | Ty::LuaIO(_, _) | Ty::Forall(_, _));
 
+            let is_concrete;
             if is_io_action {
                 // Wrap in a function (IO action, needs to be called)
                 self.emit_indent();
@@ -230,6 +230,7 @@ impl CodeGen {
                 self.emit_indent(); self.emit("return "); self.gen_expr(&clauses[0].body); self.emit("\n");
                 self.indent -= 1;
                 self.emit_line("end");
+                is_concrete = true;
             } else if expr_references_name(&clauses[0].body, &func.name) {
                 // Self-referencing value binding (e.g., infinite list)
                 if !self.forward_declared.contains(&lua_name) {
@@ -239,12 +240,14 @@ impl CodeGen {
                 self.emit(&format!("{} = ", lua_name));
                 self.gen_expr_lazy(&clauses[0].body, &func.name);
                 self.emit("\n");
+                is_concrete = true;
             } else if Self::is_cheap(&clauses[0].body) {
                 // Cheap value binding — evaluate eagerly
                 self.emit_indent();
                 self.emit(&self.var_decl(&lua_name));
                 self.gen_expr(&clauses[0].body);
                 self.emit("\n");
+                is_concrete = true;
             } else {
                 // Expensive value binding — thunk for lazy evaluation
                 self.emit_indent();
@@ -253,9 +256,11 @@ impl CodeGen {
                 self.gen_expr(&clauses[0].body);
                 self.emit(" end)");
                 self.emit("\n");
+                is_concrete = false;
             }
             self.emit_line("");
             self.concrete_vars = saved_concrete;
+            if is_concrete { self.concrete_vars.insert(lua_name); }
             return;
         }
 
@@ -269,12 +274,17 @@ impl CodeGen {
             self.emit(&self.fn_decl(&lua_name, &params_str));
             self.emit("\n");
             self.indent += 1;
+            // The function name is concrete (it's a function value) — allow
+            // self-recursive calls to skip __force
+            self.concrete_vars.insert(lua_name.clone());
 
             let all_simple = clause.patterns.iter().all(|p| matches!(p, TPattern::Var(_, _) | TPattern::Wildcard));
             if all_simple {
                 for (i, pat) in clause.patterns.iter().enumerate() {
                     if let TPattern::Var(v, _) = pat {
-                        self.emit_line(&format!("local {} = _arg{}", v, i));
+                        let sname = sanitize_name(v);
+                        self.emit_line(&format!("local {} = __force(_arg{})", sname, i));
+                        self.concrete_vars.insert(sname);
                     }
                 }
                 self.gen_where_binds(&clause.where_binds);
@@ -305,6 +315,7 @@ impl CodeGen {
             self.emit_line("end");
             self.emit_line("");
             self.concrete_vars = saved_concrete;
+            self.concrete_vars.insert(lua_name);
             return;
         }
 
@@ -318,14 +329,10 @@ impl CodeGen {
         self.emit(&self.fn_decl(&lua_name, &params_str));
         self.emit("\n");
         self.indent += 1;
-        // Force only args that are destructured (not just var/wildcard bindings)
+        self.concrete_vars.insert(lua_name.clone());
+        // Force all args at entry so they're concrete throughout the body
         for (i, p) in params.iter().enumerate() {
-            let needs_force = clauses.iter().any(|c| {
-                c.patterns.get(i).map_or(false, |pat| {
-                    !matches!(pat, TPattern::Var(_, _) | TPattern::Wildcard)
-                })
-            });
-            if needs_force {
+            if i < num_params {
                 self.emit_line(&format!("{} = __force({})", p, p));
                 self.concrete_vars.insert(p.clone());
             }
@@ -335,6 +342,7 @@ impl CodeGen {
         self.emit_line("end");
         self.emit_line("");
         self.concrete_vars = saved_concrete;
+        self.concrete_vars.insert(lua_name);
     }
 
     fn gen_where_binds(&mut self, binds: &[TLocalDef]) {
@@ -626,20 +634,21 @@ impl CodeGen {
             TExprKind::Lit(_) | TExprKind::Con(_) | TExprKind::Var(_)
             | TExprKind::Lambda { .. } | TExprKind::OpFunc(_) => true,
             TExprKind::Paren(inner) | TExprKind::Negate(inner) => Self::is_cheap(inner),
+            TExprKind::Tuple(elems) => elems.iter().all(|e| Self::is_cheap(e)),
             TExprKind::InfixApp { op, lhs, rhs } => {
                 // Builtin ops (arithmetic, comparison, concat) are cheap
                 // if their operands are cheap
                 is_builtin_op(op) && Self::is_cheap(lhs) && Self::is_cheap(rhs)
             }
             TExprKind::App(func, arg) => {
-                // Constructor applications are cheap (just table creation)
-                if Self::is_con_app(expr) {
-                    Self::is_cheap(arg) && Self::is_cheap(func)
-                } else {
-                    false
-                }
+                // Function/constructor applications are cheap when both
+                // the function and argument are cheap (variables, literals, etc.)
+                Self::is_cheap(func) && Self::is_cheap(arg)
             }
-            // Function calls, case, if, let — potentially expensive, thunk them
+            TExprKind::If { cond, then_branch, else_branch } => {
+                Self::is_cheap(cond) && Self::is_cheap(then_branch) && Self::is_cheap(else_branch)
+            }
+            // Function calls, case, let — potentially expensive, thunk them
             _ => false,
         }
     }
@@ -651,6 +660,79 @@ impl CodeGen {
             TExprKind::App(func, _) => Self::is_con_app(func),
             _ => false,
         }
+    }
+
+    /// Emit an ST/IO action in a flattened bind chain.
+    /// Bare Var references to zero-arg IO/ST bindings are deferred functions
+    /// in Lua and need () to execute. Everything else self-evaluates.
+    fn gen_action(&mut self, expr: &TExpr) {
+        self.gen_expr(expr);
+        // A bare Var with a monadic type (no arrows) is a zero-arg IO/ST
+        // binding — codegen wraps those in function() ... end, so call it.
+        if let TExprKind::Var(_) = &expr.kind {
+            if Self::is_nullary_action_type(&expr.ty) {
+                self.emit("()");
+            }
+        }
+    }
+
+    fn is_nullary_action_type(ty: &Ty) -> bool {
+        matches!(ty, Ty::IO(_) | Ty::LuaIO(_, _))
+            || matches!(ty, Ty::App(f, _) if matches!(f.as_ref(),
+                Ty::App(c, _) if matches!(c.as_ref(), Ty::Con(n) if n == "ST")))
+    }
+
+    /// Flatten a monadic bind chain (from do-notation) into sequential
+    /// local statements. Called inside an IIFE context.
+    /// Handles: >>= with lambda, >>, let bindings.
+    fn gen_bind_chain(&mut self, expr: &TExpr) {
+        match &expr.kind {
+            TExprKind::InfixApp { op, lhs, rhs } if op == ">>=" => {
+                if let TExprKind::Lambda { params, body } = &rhs.kind {
+                    // x <- action  =>  local x = action  (or action() for zero-arg IO vars)
+                    let param_name = sanitize_name(&params[0].0);
+                    self.emit_indent();
+                    self.emit(&format!("local {} = ", param_name));
+                    self.gen_action(lhs);
+                    self.emit("\n");
+                    self.concrete_vars.insert(param_name);
+                    self.gen_bind_chain(body);
+                    return;
+                }
+            }
+            TExprKind::InfixApp { op, lhs, rhs } if op == ">>" => {
+                // action >> rest  =>  action; rest
+                self.emit_indent();
+                self.gen_action(lhs);
+                self.emit("\n");
+                self.gen_bind_chain(rhs);
+                return;
+            }
+            TExprKind::Let { binds, body } => {
+                // let x = e in rest  =>  local x = e; rest
+                for bind in binds {
+                    self.emit_indent();
+                    if Self::is_cheap(&bind.body) {
+                        self.emit(&format!("local {} = ", bind.name));
+                        self.gen_expr(&bind.body);
+                        self.emit("\n");
+                        self.concrete_vars.insert(bind.name.clone());
+                    } else {
+                        self.emit(&format!("local {} = __thunk(function() return ", bind.name));
+                        self.gen_expr(&bind.body);
+                        self.emit(" end)\n");
+                    }
+                }
+                self.gen_bind_chain(body);
+                return;
+            }
+            _ => {}
+        }
+        // Terminal expression — emit return
+        self.emit_indent();
+        self.emit("return ");
+        self.gen_expr(expr);
+        self.emit("\n");
     }
 
     /// Emit an expression in function-call position.
@@ -803,6 +885,7 @@ impl CodeGen {
             TExprKind::InfixApp { op, lhs, rhs } => {
                 let lua_op = match op.as_str() {
                     "++" => "..", "&&" => "and", "||" => "or", "/=" => "~=",
+                    "div" => "//", "mod" => "%",
                     ":" => {
                         self.emit("__mll_cons(");
                         self.gen_expr(lhs); self.emit(", "); self.gen_expr(rhs);
@@ -814,15 +897,27 @@ impl CodeGen {
                         return;
                     }
                     ">>=" => {
-                        // IO bind: lhs >>= rhs  =>  rhs(__mll_run(lhs))
-                        self.emit("("); self.gen_expr(rhs); self.emit(")(");
-                        self.emit("__mll_run("); self.gen_expr(lhs); self.emit("))");
+                        // Flatten monadic bind chains into sequential locals
+                        // in a single IIFE — eliminates nested closures from do-notation
+                        if let TExprKind::Lambda { .. } = &rhs.kind {
+                            self.emit("(function()\n");
+                            self.indent += 1;
+                            self.gen_bind_chain(expr);
+                            self.indent -= 1;
+                            self.emit_indent(); self.emit("end)()");
+                        } else {
+                            self.emit("("); self.gen_expr(rhs); self.emit(")(");
+                            self.emit("__mll_run("); self.gen_expr(lhs); self.emit("))");
+                        }
                         return;
                     }
                     ">>" => {
-                        // IO then: lhs >> rhs  =>  __mll_run(lhs); rhs
-                        self.emit("(function() __mll_run("); self.gen_expr(lhs);
-                        self.emit("); return "); self.gen_expr(rhs); self.emit(" end)()");
+                        // Flatten IO-then chains too
+                        self.emit("(function()\n");
+                        self.indent += 1;
+                        self.gen_bind_chain(expr);
+                        self.indent -= 1;
+                        self.emit_indent(); self.emit("end)()");
                         return;
                     }
                     "." => {
@@ -839,14 +934,8 @@ impl CodeGen {
                     self.gen_expr(rhs); self.emit(")");
                 } else {
                     // User-defined or non-Lua operator: emit as function call
-                    match op.as_str() {
-                        "mod" => { self.emit("("); self.gen_expr(lhs); self.emit(" % "); self.gen_expr(rhs); self.emit(")"); }
-                        "div" => { self.emit("("); self.gen_expr(lhs); self.emit(" // "); self.gen_expr(rhs); self.emit(")"); }
-                        _ => {
-                            self.emit(&sanitize_name(op)); self.emit("(");
-                            self.gen_expr(lhs); self.emit(", "); self.gen_expr(rhs); self.emit(")");
-                        }
-                    }
+                    self.emit(&sanitize_name(op)); self.emit("(");
+                    self.gen_expr(lhs); self.emit(", "); self.gen_expr(rhs); self.emit(")");
                 }
             }
             TExprKind::Negate(inner) => { self.emit("(-"); self.gen_expr(inner); self.emit(")"); }
@@ -1141,6 +1230,7 @@ fn sanitize_name(name: &str) -> String {
         "bsGetI8" => "__mll_bs[22]".to_string(),
         "bsGetI16LE" => "__mll_bs[23]".to_string(),
         "bsPutI16LE" => "__mll_bs[24]".to_string(),
+        "bsConcatList" => "__mll_bs[25]".to_string(),
         "runST" => "__mll_run".to_string(),
         "newSTArray" => "__mll_ma_new".to_string(),
         "readSTArray" => "__mll_ma_read".to_string(),
@@ -1226,7 +1316,8 @@ fn count_arrows(ty: &Ty) -> usize {
 
 fn is_builtin_op(op: &str) -> bool {
     matches!(op, "+" | "-" | "*" | "/" | "%" | "^" | "==" | "/=" | "~="
-        | "<" | ">" | "<=" | ">=" | "++" | "&&" | "||" | ".." | "$" | ".")
+        | "<" | ">" | "<=" | ">=" | "++" | "&&" | "||" | ".." | "$" | "."
+        | "div" | "mod")
 }
 
 pub fn generate(module: &TModule) -> String {
@@ -1541,6 +1632,11 @@ local __mll_bs; do
         end,
         function(v)                                                              -- [24] putI16LE (signed int to 2-byte BS)
             v=F(v); if v<0 then v=v+65536 end; return sc(v%256, v//256%256)
+        end,
+        function(xs)                                                             -- [25] concatList
+            xs = F(xs); local t = {}; local cur = xs
+            while cur ~= nil do t[#t+1] = F(__mll_head(cur)); cur = __mll_tail(cur) end
+            return table.concat(t)
         end,
     }
 end

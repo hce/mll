@@ -50,7 +50,7 @@ impl Monomorphizer {
             "hmEmpty", "hmInsert", "hmLookup", "hmDelete",
             "hmSize", "hmKeys", "hmValues", "hmMember",
             "bsEmpty", "bsLength", "bsIndex", "bsSub", "bsSingleton",
-            "bsConcat", "bsNull", "bsHead", "bsTail", "bsCons", "bsSnoc",
+            "bsConcat", "bsConcatList", "bsNull", "bsHead", "bsTail", "bsCons", "bsSnoc",
             "bsReplicate", "bsPack", "bsUnpack", "bsMap", "bsFoldl",
             "bsXor", "bsZipWith", "bsToString", "bsFromString",
             "bsGetU16LE", "bsGetU32LE", "bsGetI8", "bsGetI16LE", "bsPutI16LE",

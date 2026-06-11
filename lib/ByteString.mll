@@ -11,9 +11,10 @@
 --   bsSingleton :: Integer -> ByteString
 --   bsCons      :: Integer -> ByteString -> ByteString
 --   bsSnoc      :: ByteString -> Integer -> ByteString
---   bsConcat    :: ByteString -> ByteString -> ByteString
---   bsReplicate :: Integer -> Integer -> ByteString
---   bsPack      :: [Integer] -> ByteString
+--   bsConcat     :: ByteString -> ByteString -> ByteString
+--   bsConcatList :: [ByteString] -> ByteString
+--   bsReplicate  :: Integer -> Integer -> ByteString
+--   bsPack       :: [Integer] -> ByteString
 --
 -- Deconstruction:
 --   bsHead      :: ByteString -> Integer
