@@ -1,44 +1,35 @@
-Tracker performance TODO
-========================
+Tracker TODO
+============
 
-"All function parameters are forced once at entry and marked concrete, eliminating repeated __force calls throughout the body"
- -- I think this one breaks some important semantics, such as implementing custom if blocks
+Current: 121s of audio rendered in 113s (0.94x real-time on fast
+machine, with 22 channels). 64-channel files are ~3x slower.
 
-"Monadic bind continuations (>>= with a lambda) mark their parameters concrete, since __mll_run always produces a forced value."
- -- This, too, may break things. What about, for example: "expensivePureComputation <$> getLine :: IO SomeResult"?
+## Done
 
+- [x] Prelude runtime functions seeded as concrete
+- [x] If-expressions as statements in bind chains
+- [x] Inline small pure functions (fi → ch * nf + field)
+- [x] Flatten monadic bind chains (zero nested closures)
+- [x] Typeclass methods inlined as Lua operators
+- [x] Whole-program call-site analysis for parameter concreteness
+- [x] UMX header detection (findIMPM)
+- [x] Active channel count from IT header
+- [x] Position tracking / subtrack skip-ahead on loop markers
 
-Current: 121s of audio rendered in 315s (2.6× slower than real-time).
-Target: real-time on commodity hardware.
+## Performance
 
-## Prelude runtime functions as concrete
+- [ ] Per-frame string allocations: bsConcat(bsPutI16LE(...),
+  bsPutI16LE(...)) creates two 2-byte strings + one 4-byte
+  concatenation per audio frame. Consider a buffer-based approach.
+- [ ] readSmp is a function call per channel per frame — could be
+  inlined (body is a simple if/then/else with bsIndex/bsGetI16LE).
 
-`__mll_ma_read`, `__mll_ma_write`, `return_`, etc. are Prelude
-runtime locals — always plain functions, never thunks. The codegen
-should seed `concrete_vars` with all Prelude runtime names so
-references skip `__force`. Currently 8 `__force(__mll_ma_read)` calls
-per channel per frame in the inner mixing loop (~140M unnecessary
-`getmetatable` checks across the full song).
+## Tracker features
 
-## If-expressions as statements in bind chains
-
-Inside a flattened do-block, `let` bindings whose body is an `if`
-expression generate IIFEs:
-
-    local smp = (function()
-        if (smpPos < sl) then return readSmp(...) else return 0 end
-    end)()
-
-These should emit as Lua if/then/else statements instead:
-
-    local smp
-    if (smpPos < sl) then smp = readSmp(...) else smp = 0 end
-
-Eliminates two closure allocations per channel per frame (`smp` and
-`sv` calculations in `mixFrame`).
-
-## Inline small pure functions
-
-`fi(ch, fiVol)` compiles to a Lua function call (`fi(ch, fiVol)`)
-that computes `ch * 14 + fiVol`. Inlining known-small pure functions
-at call sites would eliminate the function call overhead entirely.
+- [ ] Volume and panning slide effects (Dxy, Jxy)
+- [ ] Tempo and speed change effects (Axx, Txx)
+- [ ] Position jump (Bxx) and pattern break (Cxx) effects
+- [ ] Vibrato, portamento, arpeggio effects
+- [ ] Sample vibrato / auto-vibrato
+- [ ] Global volume
+- [ ] NNA (New Note Action) handling
