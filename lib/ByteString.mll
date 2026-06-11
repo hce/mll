@@ -1,0 +1,37 @@
+-- ByteString: efficient byte sequences backed by Lua strings
+--
+-- All functions are intrinsic (defined in the compiler runtime).
+-- Import this module for documentation; the functions are available
+-- without import since they are registered as builtins.
+--
+-- Indices are 0-based.
+--
+-- Construction:
+--   bsEmpty     :: ByteString
+--   bsSingleton :: Integer -> ByteString
+--   bsCons      :: Integer -> ByteString -> ByteString
+--   bsSnoc      :: ByteString -> Integer -> ByteString
+--   bsConcat    :: ByteString -> ByteString -> ByteString
+--   bsReplicate :: Integer -> Integer -> ByteString
+--   bsPack      :: [Integer] -> ByteString
+--
+-- Deconstruction:
+--   bsHead      :: ByteString -> Integer
+--   bsTail      :: ByteString -> ByteString
+--   bsUnpack    :: ByteString -> [Integer]
+--
+-- Query:
+--   bsLength    :: ByteString -> Integer
+--   bsIndex     :: ByteString -> Integer -> Integer
+--   bsNull      :: ByteString -> Bool
+--   bsSub       :: ByteString -> Integer -> Integer -> ByteString
+--
+-- Transformations:
+--   bsMap       :: (Integer -> Integer) -> ByteString -> ByteString
+--   bsFoldl     :: (a -> Integer -> a) -> a -> ByteString -> a
+--   bsXor       :: ByteString -> ByteString -> ByteString
+--   bsZipWith   :: (Integer -> Integer -> Integer) -> ByteString -> ByteString -> ByteString
+--
+-- Conversion:
+--   bsToString   :: ByteString -> String
+--   bsFromString :: String -> ByteString
