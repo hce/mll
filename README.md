@@ -99,6 +99,11 @@ performance that rust offers in a haskell-like language.
 In addition, type safety allows to catch bugs during compile time,
 which makes development with the help of an LLM much easier.
 
+## Why rust, not haskell?
+
+Because the project's purpose is to make haskell available where it
+otherwise wouldn't be. Making ghc or another haskell compiler a
+requirement would defeat that purpose.
 
 ## Language properties:
 
