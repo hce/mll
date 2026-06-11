@@ -126,6 +126,7 @@ fn examples_compile() {
         "bench",              // show specialization gap on list display
         "regex_test",         // deep typechecker recursion on CPS types needs larger stack
         "jsontest",           // deep typechecker recursion on imported JSON module
+        "aestest",            // 256-element S-box lists need large stack (runs via mll compiler)
     ];
 
     let mut failures = Vec::new();
