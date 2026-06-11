@@ -68,6 +68,9 @@ smpC5Freq bs off = bsGetU32LE bs (off + 60)
 smpDataPtr :: ByteString -> Integer -> Integer
 smpDataPtr bs off = bsGetU32LE bs (off + 72)
 
+smpGlobalVol :: ByteString -> Integer -> Integer
+smpGlobalVol bs off = bsIndex bs (off + 17)
+
 smpDefaultVol :: ByteString -> Integer -> Integer
 smpDefaultVol bs off = bsIndex bs (off + 19)
 
@@ -135,6 +138,8 @@ fi16 :: Integer
 fi16 = 2
 fiInc :: Integer
 fiInc = 3
+fiGVl :: Integer
+fiGVl = 4
 fiVol :: Integer
 fiVol = 5
 fiPan :: Integer
@@ -176,7 +181,7 @@ setNoteFreq :: [Integer] -> Integer -> Integer -> [Integer]
 setNoteFreq st ch note = let c5 = nth st (fi ch fiC5) in let inc = noteInc note c5 in lset (lset (lset st (fi ch fiPos) 0) (fi ch fiInc) inc) (fi ch fiAct) 1
 
 loadSmp :: ByteString -> [Integer] -> Integer -> Integer -> [Integer]
-loadSmp fd st ch sn = let off = smpOffset fd (sn - 1) in let sl = smpLen fd off in let lb = smpLoopBegin fd off in let le = smpLoopEnd fd off in let c5 = smpC5Freq fd off in let dp = smpDataPtr fd off in let dv = smpDefaultVol fd off in let fl = smpFlags fd off in let hl = if smpHasLoop fl then 1 else 0 in let b16 = if smpIs16Bit fl then 1 else 0 in lset (lset (lset (lset (lset (lset (lset (lset (lset st (fi ch fiSmp) sn) (fi ch fiLen) sl) (fi ch fiLpS) lb) (fi ch fiLpE) le) (fi ch fiLp) hl) (fi ch fiDPtr) dp) (fi ch fiC5) c5) (fi ch fiVol) dv) (fi ch fi16) b16
+loadSmp fd st ch sn = let off = smpOffset fd (sn - 1) in let sl = smpLen fd off in let lb = smpLoopBegin fd off in let le = smpLoopEnd fd off in let c5 = smpC5Freq fd off in let dp = smpDataPtr fd off in let dv = smpDefaultVol fd off in let gv = smpGlobalVol fd off in let fl = smpFlags fd off in let hl = if smpHasLoop fl then 1 else 0 in let b16 = if smpIs16Bit fl then 1 else 0 in lset (lset (lset (lset (lset (lset (lset (lset (lset (lset st (fi ch fiSmp) sn) (fi ch fiLen) sl) (fi ch fiLpS) lb) (fi ch fiLpE) le) (fi ch fiLp) hl) (fi ch fiDPtr) dp) (fi ch fiC5) c5) (fi ch fiVol) dv) (fi ch fi16) b16) (fi ch fiGVl) gv
 
 -- ========== Mixing (ST monad for O(1) array access) ==========
 
@@ -194,7 +199,9 @@ mixFrames fd arr n numCh acc = do
     frame <- mixFrame fd arr numCh 0 0 0
     let l = fst frame
     let r = snd frame
-    let pcm = bsConcat (bsPutI16LE (clamp (0 - 32768) 32767 l)) (bsPutI16LE (clamp (0 - 32768) 32767 r))
+    let ml = (l * 48) `div` (128 * 3)
+    let mr = (r * 48) `div` (128 * 3)
+    let pcm = bsConcat (bsPutI16LE (clamp (0 - 32768) 32767 ml)) (bsPutI16LE (clamp (0 - 32768) 32767 mr))
     mixFrames fd arr (n - 1) numCh (bsConcat acc pcm)
 
 mixFrame :: ByteString -> STArray s -> Integer -> Integer -> Integer -> Integer -> ST s (Integer, Integer)
@@ -209,8 +216,8 @@ mixFrame fd arr numCh ch la ra = if ch >= numCh then return (la, ra) else do
         is16 <- readSTArray arr (fi ch fi16)
         let smpPos = pos `div` 256
         let smp = if smpPos < sl then readSmp fd dp smpPos (is16 == 1) else 0
-        let scaled = if is16 == 1 then smp `div` 256 else smp
-        let sv = scaled * vol * 4
+        gvl <- readSTArray arr (fi ch fiGVl)
+        let sv = if is16 == 1 then (smp * vol * gvl * 128) `div` (64 * 64 * 128) else (smp * vol * gvl * 128 * 256) `div` (64 * 64 * 128)
         let nl = la + (sv * (64 - pan)) `div` 64
         let nr = ra + (sv * pan) `div` 64
         advPos arr ch
