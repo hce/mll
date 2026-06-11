@@ -311,10 +311,17 @@ impl CodeGen {
 
             let all_simple = clause.patterns.iter().all(|p| matches!(p, TPattern::Var(_, _) | TPattern::Wildcard));
             if all_simple {
+                // Strictness approximation: force params that appear in the body.
+                // Unused params stay lazy (e.g. fibHack _count = fibs 10240000).
                 for (i, pat) in clause.patterns.iter().enumerate() {
                     if let TPattern::Var(v, _) = pat {
                         let sname = sanitize_name(v);
-                        self.emit_line(&format!("local {} = _arg{}", sname, i));
+                        if expr_references_name(&clause.body, v) {
+                            self.emit_line(&format!("local {} = __force(_arg{})", sname, i));
+                            self.concrete_vars.insert(sname);
+                        } else {
+                            self.emit_line(&format!("local {} = _arg{}", sname, i));
+                        }
                     }
                 }
                 self.gen_where_binds(&clause.where_binds);
@@ -694,6 +701,21 @@ impl CodeGen {
         }
     }
 
+    /// Like is_cheap but also treats function applications with cheap
+    /// sub-expressions as cheap. Safe for function arguments where the
+    /// callee will force the value immediately — avoids thunk allocation
+    /// for calls like fi(ch, fiVol) that compute simple values.
+    fn is_cheap_arg(expr: &TExpr) -> bool {
+        if Self::is_cheap(expr) { return true; }
+        match &expr.kind {
+            TExprKind::App(func, arg) => {
+                Self::is_cheap_arg(func) && Self::is_cheap_arg(arg)
+            }
+            TExprKind::Paren(inner) => Self::is_cheap_arg(inner),
+            _ => false,
+        }
+    }
+
     /// Check if an expression is a constructor application (Con applied to args)
     fn is_con_app(expr: &TExpr) -> bool {
         match &expr.kind {
@@ -952,7 +974,7 @@ impl CodeGen {
                     self.emit("(");
                     for (i, a) in args.iter().enumerate() {
                         if i > 0 { self.emit(", "); }
-                        if Self::is_cheap(a) {
+                        if Self::is_cheap_arg(a) {
                             self.gen_expr(a);
                         } else {
                             self.emit("__thunk(function() return ");
