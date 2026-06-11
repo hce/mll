@@ -11,3 +11,10 @@ superset of instruments.
 
 The ImpulseTracker format was used in the Deus Ex (1) and Unreal (1)
 games, amongst others.
+
+Do note that while Deus Ex music is partly ImpulseTracker, they are
+wrapped in Unreal's proprietary, complex object file format with the
+.umx extension. You will need to extract them from there first using
+UnrealEd. Or, you use other tracker files. If you like this kind of
+music, you'll know what to do. Much as I would like to ship these
+files, can't, as they are copyrighted by their original authors.
