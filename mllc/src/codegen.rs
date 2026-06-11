@@ -929,11 +929,34 @@ impl CodeGen {
             }
             _ => {}
         }
-        // Terminal expression — emit return
-        self.emit_indent();
-        self.emit("return ");
-        self.gen_expr(expr);
-        self.emit("\n");
+        // Terminal expression — emit as statement when possible
+        match &expr.kind {
+            TExprKind::If { cond, then_branch, else_branch } => {
+                // Emit if/then/else as Lua statement instead of IIFE.
+                // Recursively apply gen_bind_chain to each branch so
+                // nested do-blocks in branches also flatten.
+                self.emit_indent();
+                self.emit("if ");
+                self.gen_expr(cond);
+                self.emit(" then\n");
+                self.indent += 1;
+                self.gen_bind_chain(then_branch);
+                self.indent -= 1;
+                self.emit_indent();
+                self.emit("else\n");
+                self.indent += 1;
+                self.gen_bind_chain(else_branch);
+                self.indent -= 1;
+                self.emit_indent();
+                self.emit("end\n");
+            }
+            _ => {
+                self.emit_indent();
+                self.emit("return ");
+                self.gen_expr(expr);
+                self.emit("\n");
+            }
+        }
     }
 
     /// Emit an expression in function-call position.
