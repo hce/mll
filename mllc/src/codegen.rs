@@ -283,8 +283,7 @@ impl CodeGen {
                 for (i, pat) in clause.patterns.iter().enumerate() {
                     if let TPattern::Var(v, _) = pat {
                         let sname = sanitize_name(v);
-                        self.emit_line(&format!("local {} = __force(_arg{})", sname, i));
-                        self.concrete_vars.insert(sname);
+                        self.emit_line(&format!("local {} = _arg{}", sname, i));
                     }
                 }
                 self.gen_where_binds(&clause.where_binds);
@@ -330,9 +329,15 @@ impl CodeGen {
         self.emit("\n");
         self.indent += 1;
         self.concrete_vars.insert(lua_name.clone());
-        // Force all args at entry so they're concrete throughout the body
+        // Force only args that are destructured (not just var/wildcard bindings)
+        // — forcing unused params would break lazy semantics (e.g. custom if blocks)
         for (i, p) in params.iter().enumerate() {
-            if i < num_params {
+            let needs_force = clauses.iter().any(|c| {
+                c.patterns.get(i).map_or(false, |pat| {
+                    !matches!(pat, TPattern::Var(_, _) | TPattern::Wildcard)
+                })
+            });
+            if needs_force {
                 self.emit_line(&format!("{} = __force({})", p, p));
                 self.concrete_vars.insert(p.clone());
             }
@@ -641,9 +646,14 @@ impl CodeGen {
                 is_builtin_op(op) && Self::is_cheap(lhs) && Self::is_cheap(rhs)
             }
             TExprKind::App(func, arg) => {
-                // Function/constructor applications are cheap when both
-                // the function and argument are cheap (variables, literals, etc.)
-                Self::is_cheap(func) && Self::is_cheap(arg)
+                // Constructor applications are cheap (just table creation).
+                // General function applications are NOT cheap — the function
+                // body might be expensive even if the args are cheap.
+                if Self::is_con_app(expr) {
+                    Self::is_cheap(arg) && Self::is_cheap(func)
+                } else {
+                    false
+                }
             }
             TExprKind::If { cond, then_branch, else_branch } => {
                 Self::is_cheap(cond) && Self::is_cheap(then_branch) && Self::is_cheap(else_branch)
@@ -1288,6 +1298,7 @@ fn sanitize_name(name: &str) -> String {
                     '^' => s.push_str("_caret_"),
                     '~' => s.push_str("_tilde_"),
                     '@' => s.push_str("_at_"),
+                    '$' => s.push_str("_dollar_"),
                     '[' => s.push_str("List_"),
                     ']' => {},
                     _ => s.push(c),
@@ -1501,7 +1512,7 @@ end
 local function take(n, xs)
     n = __force(n); xs = __force(xs)
     if n <= 0 or xs == nil then return nil end
-    return __mll_cons(__mll_head(xs), take(n - 1, __mll_tail(xs)))
+    return __mll_lazy_cons(__mll_head(xs), function() return take(n - 1, __mll_tail(xs)) end)
 end
 local function zipWith(f, xs, ys)
     f = __force(f); xs = __force(xs); ys = __force(ys)
