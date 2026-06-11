@@ -558,6 +558,16 @@ impl Checker {
             vars: vec![s.clone()],
             ty: Ty::arrow(sta_s.clone(), st_s(int.clone())),
         });
+        // newSTArrayFromList :: [Integer] -> ST s (STArray s)
+        self.env.insert("newSTArrayFromList".into(), Scheme {
+            vars: vec![s.clone()],
+            ty: Ty::arrow(Ty::list(int.clone()), st_s(sta_s.clone())),
+        });
+        // stArrayToList :: STArray s -> ST s [Integer]
+        self.env.insert("stArrayToList".into(), Scheme {
+            vars: vec![s.clone()],
+            ty: Ty::arrow(sta_s.clone(), st_s(Ty::list(int.clone()))),
+        });
 
         // Built-in Monad typeclass (simplified: IO is the only instance)
         // >>=  :: IO a -> (a -> IO b) -> IO b

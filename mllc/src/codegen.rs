@@ -1147,6 +1147,8 @@ fn sanitize_name(name: &str) -> String {
         "writeSTArray" => "__mll_ma_write".to_string(),
         "modifySTArray" => "__mll_ma_modify".to_string(),
         "stArrayLength" => "__mll_ma_length".to_string(),
+        "newSTArrayFromList" => "__mll_ma_from_list".to_string(),
+        "stArrayToList" => "__mll_ma_to_list".to_string(),
         "hmEmpty" => "hashmap_empty".to_string(),
         "hmInsert" => "hashmap_insert".to_string(),
         "hmLookup" => "hashmap_lookup".to_string(),
@@ -1559,4 +1561,14 @@ local function __mll_ma_modify(arr, idx, f)
     arr[idx] = __force(f)(arr[idx])
 end
 local function __mll_ma_length(arr) return #__force(arr) end
+local function __mll_ma_from_list(xs)
+    xs = __force(xs); local t = {}; local cur = xs
+    while cur ~= nil do t[#t+1] = __force(__mll_head(cur)); cur = __mll_tail(cur) end
+    return t
+end
+local function __mll_ma_to_list(arr)
+    arr = __force(arr); local r = nil
+    for i = #arr, 1, -1 do r = __mll_cons(arr[i], r) end
+    return r
+end
 "#;

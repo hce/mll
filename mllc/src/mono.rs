@@ -55,7 +55,7 @@ impl Monomorphizer {
             "bsXor", "bsZipWith", "bsToString", "bsFromString",
             "bsGetU16LE", "bsGetU32LE", "bsGetI8", "bsGetI16LE", "bsPutI16LE",
             "runST", "newSTArray", "readSTArray", "writeSTArray",
-            "modifySTArray", "stArrayLength",
+            "modifySTArray", "stArrayLength", "newSTArrayFromList", "stArrayToList",
         ] {
             builtins.insert(name.to_string());
         }
