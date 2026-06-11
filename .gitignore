@@ -1,3 +1,5 @@
 target/
 examples/*.lua
+examples/tracker/*.wav
+examples/tracker/*.it
 lib/*.lua
