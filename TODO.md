@@ -65,6 +65,10 @@ MATA-LL TODO
 
 - [ ] Monadic operators (>>=, >>, return, pure) use hardcoded unification for IO/LuaIO instead of proper Monad typeclass dispatch — revisit once typeclass infrastructure is more mature
 
+## String types (design decision)
+
+String = Lua string permanently. ByteString = Lua string with explicit byte semantics (same runtime representation, type-level distinction only). Text = future UTF-8 type over ByteString, if/when Unicode support is needed.
+
 ## Can defer (spec says so)
 
 - [ ] Operator fixity declarations (Haskell defaults hardcoded)
