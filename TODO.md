@@ -69,6 +69,12 @@ MATA-LL TODO
 
 String = Lua string permanently. ByteString = Lua string with explicit byte semantics (same runtime representation, type-level distinction only). Text = future UTF-8 type over ByteString, if/when Unicode support is needed.
 
+## Parser
+
+- [ ] Multi-line function application (arguments on continuation lines) — needs layout rule to distinguish from new declarations
+- [ ] Multi-binding `let` in `do` blocks (currently need separate `let` per binding)
+- [ ] Guards in combination with `where` clauses (parser returns early for guarded clauses)
+
 ## Can defer (spec says so)
 
 - [ ] Operator fixity declarations (Haskell defaults hardcoded)
