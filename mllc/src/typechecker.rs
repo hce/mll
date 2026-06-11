@@ -428,6 +428,11 @@ impl Checker {
             ("bsZipWith",   vec![], Ty::fun(&[Ty::fun(&[int.clone(), int.clone()], int.clone()), bs.clone(), bs.clone()], bs.clone())),
             ("bsToString",  vec![], Ty::arrow(bs.clone(), Ty::Con("String".into()))),
             ("bsFromString", vec![], Ty::arrow(Ty::Con("String".into()), bs.clone())),
+            ("bsGetU16LE",  vec![], Ty::fun(&[bs.clone(), int.clone()], int.clone())),
+            ("bsGetU32LE",  vec![], Ty::fun(&[bs.clone(), int.clone()], int.clone())),
+            ("bsGetI8",     vec![], Ty::fun(&[bs.clone(), int.clone()], int.clone())),
+            ("bsGetI16LE",  vec![], Ty::fun(&[bs.clone(), int.clone()], int.clone())),
+            ("bsPutI16LE",  vec![], Ty::arrow(int.clone(), bs.clone())),
         ];
         for (name, vars, ty) in bs_entries {
             self.env.insert(name.into(), Scheme { vars, ty });
@@ -512,6 +517,46 @@ impl Checker {
                 Ty::app(Ty::Con("LuaFunction".into()), Ty::Var(s.clone())),
                 ta.clone(),
             ),
+        });
+
+        // ST s a — pure mutable state monad (same runtime as IO, type-level distinction only)
+        // STArray s — mutable integer array, scoped to ST s
+        let st_s = |inner: Ty| Ty::app(Ty::app(Ty::Con("ST".into()), ts.clone()), inner);
+        let sta_s = Ty::app(Ty::Con("STArray".into()), ts.clone());
+
+        // runST :: (forall s. ST s a) -> a
+        // Rank-2: the s is universally quantified in the argument
+        self.env.insert("runST".into(), Scheme {
+            vars: vec![a.clone()],
+            ty: Ty::arrow(
+                Ty::Forall(s.clone(), Box::new(st_s(ta.clone()))),
+                ta.clone(),
+            ),
+        });
+        // newSTArray :: Integer -> Integer -> ST s (STArray s)
+        self.env.insert("newSTArray".into(), Scheme {
+            vars: vec![s.clone()],
+            ty: Ty::fun(&[int.clone(), int.clone()], st_s(sta_s.clone())),
+        });
+        // readSTArray :: STArray s -> Integer -> ST s Integer
+        self.env.insert("readSTArray".into(), Scheme {
+            vars: vec![s.clone()],
+            ty: Ty::fun(&[sta_s.clone(), int.clone()], st_s(int.clone())),
+        });
+        // writeSTArray :: STArray s -> Integer -> Integer -> ST s ()
+        self.env.insert("writeSTArray".into(), Scheme {
+            vars: vec![s.clone()],
+            ty: Ty::fun(&[sta_s.clone(), int.clone(), int.clone()], st_s(Ty::Unit)),
+        });
+        // modifySTArray :: STArray s -> Integer -> (Integer -> Integer) -> ST s ()
+        self.env.insert("modifySTArray".into(), Scheme {
+            vars: vec![s.clone()],
+            ty: Ty::fun(&[sta_s.clone(), int.clone(), Ty::arrow(int.clone(), int.clone())], st_s(Ty::Unit)),
+        });
+        // stArrayLength :: STArray s -> ST s Integer
+        self.env.insert("stArrayLength".into(), Scheme {
+            vars: vec![s.clone()],
+            ty: Ty::arrow(sta_s.clone(), st_s(int.clone())),
         });
 
         // Built-in Monad typeclass (simplified: IO is the only instance)
@@ -639,6 +684,12 @@ impl Checker {
         }
         // LuaFunction: kind Type -> Type
         self.kinds.insert("LuaFunction".to_string(), type_to_type.clone());
+        // ST: kind Type -> Type -> Type (ST s a)
+        self.kinds.insert("ST".to_string(),
+            Kind::Arrow(Box::new(Kind::Type),
+                Box::new(Kind::Arrow(Box::new(Kind::Type), Box::new(Kind::Type)))));
+        // STArray: kind Type -> Type (parameterized by scope s)
+        self.kinds.insert("STArray".to_string(), type_to_type.clone());
         // HashMap: kind Type -> Type -> Type
         self.kinds.insert("HashMap".to_string(),
             Kind::Arrow(Box::new(Kind::Type),

@@ -239,11 +239,19 @@ impl CodeGen {
                 self.emit(&format!("{} = ", lua_name));
                 self.gen_expr_lazy(&clauses[0].body, &func.name);
                 self.emit("\n");
-            } else {
-                // Simple value binding
+            } else if Self::is_cheap(&clauses[0].body) {
+                // Cheap value binding — evaluate eagerly
                 self.emit_indent();
                 self.emit(&self.var_decl(&lua_name));
                 self.gen_expr(&clauses[0].body);
+                self.emit("\n");
+            } else {
+                // Expensive value binding — thunk for lazy evaluation
+                self.emit_indent();
+                self.emit(&self.var_decl(&lua_name));
+                self.emit("__thunk(function() return ");
+                self.gen_expr(&clauses[0].body);
+                self.emit(" end)");
                 self.emit("\n");
             }
             self.emit_line("");
@@ -1128,6 +1136,17 @@ fn sanitize_name(name: &str) -> String {
         "bsZipWith" => "__mll_bs[17]".to_string(),
         "bsToString" => "__mll_bs[18]".to_string(),
         "bsFromString" => "__mll_bs[19]".to_string(),
+        "bsGetU16LE" => "__mll_bs[20]".to_string(),
+        "bsGetU32LE" => "__mll_bs[21]".to_string(),
+        "bsGetI8" => "__mll_bs[22]".to_string(),
+        "bsGetI16LE" => "__mll_bs[23]".to_string(),
+        "bsPutI16LE" => "__mll_bs[24]".to_string(),
+        "runST" => "__mll_run".to_string(),
+        "newSTArray" => "__mll_ma_new".to_string(),
+        "readSTArray" => "__mll_ma_read".to_string(),
+        "writeSTArray" => "__mll_ma_write".to_string(),
+        "modifySTArray" => "__mll_ma_modify".to_string(),
+        "stArrayLength" => "__mll_ma_length".to_string(),
         "hmEmpty" => "hashmap_empty".to_string(),
         "hmInsert" => "hashmap_insert".to_string(),
         "hmLookup" => "hashmap_lookup".to_string(),
@@ -1506,8 +1525,38 @@ local __mll_bs; do
         end,
         function(s) return F(s) end,                                             -- [18] tostring
         function(s) return F(s) end,                                             -- [19] fromstring
+        function(s, i)                                                           -- [20] getU16LE
+            s=F(s); i=F(i)+1; local lo,hi=sb(s,i),sb(s,i+1); return lo+hi*256
+        end,
+        function(s, i)                                                           -- [21] getU32LE
+            s=F(s); i=F(i)+1; local a,b,c,d=sb(s,i),sb(s,i+1),sb(s,i+2),sb(s,i+3); return a+b*256+c*65536+d*16777216
+        end,
+        function(s, i)                                                           -- [22] getI8 (signed)
+            s=F(s); local v=sb(s,F(i)+1); if v>=128 then return v-256 else return v end
+        end,
+        function(s, i)                                                           -- [23] getI16LE (signed)
+            s=F(s); i=F(i)+1; local v=sb(s,i)+sb(s,i+1)*256; if v>=32768 then return v-65536 else return v end
+        end,
+        function(v)                                                              -- [24] putI16LE (signed int to 2-byte BS)
+            v=F(v); if v<0 then v=v+65536 end; return sc(v%256, v//256%256)
+        end,
     }
 end
 local function show_ByteString(s) s = __force(s); local t = {} for i = 1, #s do t[i] = string.format("%02x", string.byte(s, i)) end return "ByteString " .. table.concat(t) end
 local function eq_ByteString(a, b) return __force(a) == __force(b) end
+
+-- MutArray runtime (mutable integer arrays, backed by Lua tables)
+-- Operations are effectful and run inside LuaIO s.
+-- 0-based indexing externally, 1-based internally.
+local function __mll_ma_new(size, init)
+    size = __force(size); init = __force(init)
+    local t = {}; for i = 1, size do t[i] = init end; return t
+end
+local function __mll_ma_read(arr, idx) return __force(arr)[__force(idx) + 1] end
+local function __mll_ma_write(arr, idx, val) __force(arr)[__force(idx) + 1] = __force(val) end
+local function __mll_ma_modify(arr, idx, f)
+    arr = __force(arr); idx = __force(idx) + 1; f = __force(f)
+    arr[idx] = __force(f)(arr[idx])
+end
+local function __mll_ma_length(arr) return #__force(arr) end
 "#;

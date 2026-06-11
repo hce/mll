@@ -351,6 +351,14 @@ pub fn unify(t1: &Ty, t2: &Ty) -> Result<Subst, TypeErrorKind> {
             Ok(s1.compose(&s2))
         }
 
+        // Forall: instantiate the quantified variable and unify the body
+        (Ty::Forall(v, inner), t) | (t, Ty::Forall(v, inner)) => {
+            // The forall-bound variable is already a rigid skolem (id=MAX).
+            // Unify the body directly — the variable will unify with whatever
+            // the concrete type provides, enforcing that it can't escape.
+            unify(inner, t)
+        }
+
         _ => Err(TypeErrorKind::Mismatch(t1.clone(), t2.clone())),
     }
 }
