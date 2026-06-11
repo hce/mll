@@ -71,5 +71,12 @@ fst (x, _) = x
 snd :: (a, b) -> b
 snd (_, y) = y
 
+
+elem :: a -> [a] -> Bool
+elem a (x:xs)
+    | a == x      = True
+    | otherwise   = elem a xs
+elem _ []     = False
+
 -- head, tail, map, filter, take, zipWith are implemented in the
 -- Lua runtime to support lazy cons cells (infinite lists).

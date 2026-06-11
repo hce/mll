@@ -179,19 +179,21 @@ initChans fd n i =
 
 -- ========== Pattern Decoding (ST monad — O(1) array access) ==========
 
+-- Returns (masks, (lv, (nextOff, jump)))
+-- jump: -1 = no jump, >= 0 = Bxx position jump, -2 = Cxx pattern break
 decodeRow :: ByteString -> Integer -> STArray s -> ByteString
     -> ByteString -> Integer -> Integer
-    -> ST s (ByteString, (ByteString, Integer))
+    -> ST s (ByteString, (ByteString, (Integer, Integer)))
 decodeRow fd off arr masks lv numCh numSmp =
-    decRowLoop fd off arr masks lv numCh numSmp
+    decRowLoop fd off arr masks lv numCh numSmp (0 - 1)
 
 decRowLoop :: ByteString -> Integer -> STArray s -> ByteString
-    -> ByteString -> Integer -> Integer
-    -> ST s (ByteString, (ByteString, Integer))
-decRowLoop fd off arr masks lv numCh numSmp =
+    -> ByteString -> Integer -> Integer -> Integer
+    -> ST s (ByteString, (ByteString, (Integer, Integer)))
+decRowLoop fd off arr masks lv numCh numSmp jump =
     let marker = bsIndex fd off
     in if marker == 0
-       then return (masks, (lv, off + 1))
+       then return (masks, (lv, (off + 1, jump)))
        else let ch   = (marker - 1) `mod` 64
                 hmb  = marker `div` 128
                 off2 = off + 1
@@ -217,8 +219,11 @@ decRowLoop fd off arr masks lv numCh numSmp =
                 lv2 = if b0 == 1 then bsSetByte lv  (ch * 4)     note else lv
                 lv3 = if b1 == 1 then bsSetByte lv2 (ch * 4 + 1) ins  else lv2
                 lv4 = if b2 == 1 then bsSetByte lv3 (ch * 4 + 2) vol  else lv3
+                jump2 = if cmd == 2 then cmdVal
+                         else if cmd == 3 then 0 - 2
+                         else jump
             in trigNote fd arr ch note ins vol cmd cmdVal numSmp
-                >> decRowLoop fd off7 arr msk2 lv4 numCh numSmp
+                >> decRowLoop fd off7 arr msk2 lv4 numCh numSmp jump2
 
 trigNote :: ByteString -> STArray s -> Integer -> Integer
     -> Integer -> Integer -> Integer -> Integer
@@ -358,27 +363,34 @@ doTickLoop fd arr speed spt numCh tick chunks =
         chunks2 <- mixTick fd arr spt numCh chunks
         doTickLoop fd arr speed spt numCh (tick + 1) chunks2
 
+-- Returns (chunks, (state, jump)) where jump is -1 for no jump
 doRows :: ByteString -> STArray s -> ByteString -> ByteString
     -> Integer -> Integer -> Integer -> Integer -> Integer -> Integer -> Integer
-    -> [ByteString] -> ST s ([ByteString], [Integer])
+    -> [ByteString] -> ST s ([ByteString], ([Integer], Integer))
 doRows fd arr masks lv dataOff row numRows speed tempo numCh numSmp chunks =
     if row >= numRows
     then do
         st2 <- stArrayToList arr
-        return (chunks, st2)
+        return (chunks, (st2, 0 - 1))
     else do
         rr <- decodeRow fd dataOff arr masks lv numCh numSmp
         let masks2  = fst rr
         let lv2     = fst (snd rr)
-        let nextOff = snd (snd rr)
+        let nextOff = fst (snd (snd rr))
+        let jump    = snd (snd (snd rr))
         let spt     = (outRate * 60) `div` (tempo * 24)
         chunks2 <- doTicks fd arr speed spt numCh chunks
-        doRows fd arr masks2 lv2 nextOff (row + 1) numRows speed tempo numCh numSmp chunks2
+        if jump >= 0 || jump == (0 - 2)
+        then do
+            st2 <- stArrayToList arr
+            return (chunks2, (st2, jump))
+        else doRows fd arr masks2 lv2 nextOff (row + 1) numRows speed tempo numCh numSmp chunks2
 
--- Process one pattern: enter runST, decode all rows + mix, return PCM chunks + updated state
+-- Process one pattern: enter runST, decode all rows + mix
+-- Returns (chunks, (state, jump))
 processPattern :: ByteString -> [Integer] -> Integer -> Integer
     -> Integer -> Integer -> Integer -> Integer
-    -> ([ByteString], [Integer])
+    -> ([ByteString], ([Integer], Integer))
 processPattern fd st pOff nRows speed tempo numCh numSmp =
     let masks = bsReplicate 64 0
         lv    = bsReplicate 256 0
@@ -394,7 +406,7 @@ emitChunks sw (c:cs) = sw c >> emitChunks sw cs
 
 findNextPos :: [Integer] -> Integer -> Integer -> Maybe Integer
 findNextPos playedPositions maxPosition n
-    | n < maxPosition = if contains n playedPositions
+    | n < maxPosition = if n `elem` playedPositions
                         then findNextPos playedPositions maxPosition (n + 1)
                         else Just n
     | otherwise       = Nothing
@@ -420,13 +432,20 @@ doOrders fd sw st idx ordNum speed tempo numCh numSmp noLoop playedPositions =
             then doOrders fd sw st (idx + 1) ordNum speed tempo numCh numSmp noLoop (idx:playedPositions)
             else if pat == 255
             then handleEnd fd sw st ordNum speed tempo numCh numSmp noLoop playedPositions
-            else let pOff  = patOffset fd pat
-                     nRows = patRows fd pOff
+            else let pOff   = patOffset fd pat
+                     nRows  = patRows fd pOff
                      result = processPattern fd st pOff nRows speed tempo numCh numSmp
                      chunks = fst result
-                     st2    = snd result
+                     st2    = fst (snd result)
+                     jump   = snd (snd result)
+                     nextIdx = if jump >= 0 then jump
+                               else if jump == (0 - 2) then idx + 1
+                               else idx + 1
+                     played2 = idx:playedPositions
                  in emitChunks sw (reverse chunks)
-                        >> doOrders fd sw st2 (idx + 1) ordNum speed tempo numCh numSmp noLoop (idx:playedPositions)
+                        >> if jump >= 0 && noLoop && jump `elem` played2
+                           then handleEnd fd sw st2 ordNum speed tempo numCh numSmp noLoop played2
+                           else doOrders fd sw st2 nextIdx ordNum speed tempo numCh numSmp noLoop played2
 
 -- Find IMPM magic to skip UMX/container headers.
 -- Returns the offset of 'I' in 'IMPM', or 0 if the file starts with it.
