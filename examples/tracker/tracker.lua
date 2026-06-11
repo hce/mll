@@ -371,15 +371,15 @@ local function eq_Ordering(_arg0, _arg1)
     end
 end
 
-local sqrt, putStrLn, assert, id, const, flip, foldl, foldr, length, reverse, mapM_, when, print_, fst, snd, bsSetByte, outRate, clamp, appI, hdrOrdNum, hdrSmpNum, hdrPatNum, hdrSpeed, hdrTempo, getOrder, getChanPan, smpOffset, smpLen, smpLoopBegin, smpLoopEnd, smpC5Freq, smpDataPtr, smpGlobalVol, smpDefaultVol, smpFlags, smpIs16Bit, smpHasLoop, readSmp, patOffset, patRows, semiRatio, pow2, noteInc, nf, fi, fiSmp, fiPos, fi16, fiInc, fiGVl, fiVol, fiPan, fiAct, fiLen, fiLpS, fiLpE, fiLp, fiDPtr, fiC5, mkChan, initChans, decodeRow, decRowLoop, trigNote, applyVol, applyEffect, setNoteFreq, loadSmp, mixTick, mixFrames, mixFrame, advPos, doTicks, doTickLoop, doRows, processPattern, emitChunks, doOrders, play, fst_TupInteger_IntegerTInteger, snd_TupInteger_IntegerTInteger, fst_TupByteString_TupByteString_IntegerTByteString, fst_TupByteString_IntegerTByteString, snd_TupByteString_TupByteString_IntegerTTupByteString_Integer, snd_TupByteString_IntegerTInteger, fst_TupLByteString_LIntegerTLByteString, snd_TupLByteString_LIntegerTLInteger
-sqrt = function(_arg0)
-    local _ffi0 = __force(_arg0)
-    return math.sqrt(__force(_ffi0))
-end
-
+local putStrLn, sqrt, assert, id, const, flip, foldl, foldr, length, reverse, mapM_, when, print_, fst, snd, bsSetByte, outRate, clamp, appI, hdrOrdNum, hdrSmpNum, hdrPatNum, hdrSpeed, hdrTempo, getOrder, getChanPan, smpOffset, smpLen, smpLoopBegin, smpLoopEnd, smpC5Freq, smpDataPtr, smpGlobalVol, smpDefaultVol, smpFlags, smpIs16Bit, smpHasLoop, readSmp, patOffset, patRows, semiRatio, pow2, noteInc, nf, fi, fiSmp, fiPos, fi16, fiInc, fiGVl, fiVol, fiPan, fiAct, fiLen, fiLpS, fiLpE, fiLp, fiDPtr, fiC5, mkChan, initChans, decodeRow, decRowLoop, trigNote, applyVol, applyEffect, setNoteFreq, loadSmp, mixTick, mixFrames, mixFrame, advPos, doTicks, doTickLoop, doRows, processPattern, emitChunks, doOrders, play, fst_TupInteger_IntegerTInteger, snd_TupInteger_IntegerTInteger, fst_TupByteString_TupByteString_IntegerTByteString, fst_TupByteString_IntegerTByteString, snd_TupByteString_TupByteString_IntegerTTupByteString_Integer, snd_TupByteString_IntegerTInteger, fst_TupLByteString_LIntegerTLByteString, snd_TupLByteString_LIntegerTLInteger
 putStrLn = function(_arg0)
     local _ffi0 = __force(_arg0)
     return print(__force(_ffi0))
+end
+
+sqrt = function(_arg0)
+    local _ffi0 = __force(_arg0)
+    return math.sqrt(__force(_ffi0))
 end
 
 assert = function(_arg0, _arg1)
@@ -534,11 +534,11 @@ clamp = function(_arg0, _arg1, _arg2)
     local hi = __force(_arg1)
     local x = __force(_arg2)
     return (function()
-        if __force(ord_lt__Integer)(x, lo) then
+        if (x < lo) then
             return lo
         else
             return (function()
-                if __force(ord_gt__Integer)(x, hi) then
+                if (x > hi) then
                     return hi
                 else
                     return x
@@ -656,12 +656,12 @@ end
 
 smpIs16Bit = function(_arg0)
     local flags = __force(_arg0)
-    return __force(eq_Integer)((((flags // 2)) % 2), 1)
+    return ((((flags // 2)) % 2) == 1)
 end
 
 smpHasLoop = function(_arg0)
     local flags = __force(_arg0)
-    return __force(eq_Integer)((((flags // 16)) % 2), 1)
+    return ((((flags // 16)) % 2) == 1)
 end
 
 readSmp = function(_arg0, _arg1, _arg2, _arg3)
@@ -676,7 +676,7 @@ readSmp = function(_arg0, _arg1, _arg2, _arg3)
             return (function()
                 local v = __force(__mll_bs[2])(bs, ((dPtr + pos)))
                 return (function()
-                    if __force(ord_ge__Integer)(v, 128) then
+                    if (v >= 128) then
                         return (v - 256)
                     else
                         return v
@@ -748,7 +748,7 @@ noteInc = function(_arg0, _arg1)
         local semi = (note % 12)
         local base = ((((c5 * semiRatio(semi)) * 256)) // ((outRate * 65536)))
         return (function()
-            if __force(ord_ge__Integer)(oct, 0) then
+            if (oct >= 0) then
                 return (base * pow2(oct))
             else
                 return (base // pow2(((0 - oct))))
@@ -803,13 +803,13 @@ initChans = function(_arg0, _arg1, _arg2)
     local n = __force(_arg1)
     local i = __force(_arg2)
     return (function()
-        if __force(ord_ge__Integer)(i, n) then
+        if (i >= n) then
             return nil
         else
             return (function()
                 local p = getChanPan(fd, i)
                 local pv = (function()
-                    if __force(ord_ge__Integer)(p, 128) then
+                    if (p >= 128) then
                         return 32
                     else
                         return p
@@ -843,7 +843,7 @@ decRowLoop = function(_arg0, _arg1, _arg2, _arg3, _arg4, _arg5, _arg6)
     return (function()
         local marker = __force(__mll_bs[2])(fd, off)
         return (function()
-            if __force(eq_Integer)(marker, 0) then
+            if (marker == 0) then
                 return __force(return_)({masks, {lv, (off + 1)}})
             else
                 return (function()
@@ -851,21 +851,21 @@ decRowLoop = function(_arg0, _arg1, _arg2, _arg3, _arg4, _arg5, _arg6)
                     local hmb = (marker // 128)
                     local off2 = (off + 1)
                     local mask = (function()
-                        if __force(eq_Integer)(hmb, 1) then
+                        if (hmb == 1) then
                             return __force(__mll_bs[2])(fd, off2)
                         else
                             return __force(__mll_bs[2])(masks, ch)
                         end
                     end)()
                     local msk2 = (function()
-                        if __force(eq_Integer)(hmb, 1) then
+                        if (hmb == 1) then
                             return bsSetByte(masks, ch, mask)
                         else
                             return masks
                         end
                     end)()
                     local off3 = (function()
-                        if __force(eq_Integer)(hmb, 1) then
+                        if (hmb == 1) then
                             return (off2 + 1)
                         else
                             return off2
@@ -879,11 +879,11 @@ decRowLoop = function(_arg0, _arg1, _arg2, _arg3, _arg4, _arg5, _arg6)
                     local b5 = (((mask // 32)) % 2)
                     local b6 = (((mask // 64)) % 2)
                     local note = (function()
-                        if __force(eq_Integer)(b0, 1) then
+                        if (b0 == 1) then
                             return __force(__mll_bs[2])(fd, off3)
                         else
                             return (function()
-                                if __force(eq_Integer)(b4, 1) then
+                                if (b4 == 1) then
                                     return __force(__mll_bs[2])(lv, ((ch * 4)))
                                 else
                                     return 255
@@ -893,11 +893,11 @@ decRowLoop = function(_arg0, _arg1, _arg2, _arg3, _arg4, _arg5, _arg6)
                     end)()
                     local off4 = (off3 + b0)
                     local ins = (function()
-                        if __force(eq_Integer)(b1, 1) then
+                        if (b1 == 1) then
                             return __force(__mll_bs[2])(fd, off4)
                         else
                             return (function()
-                                if __force(eq_Integer)(b5, 1) then
+                                if (b5 == 1) then
                                     return __force(__mll_bs[2])(lv, (((ch * 4) + 1)))
                                 else
                                     return 0
@@ -907,11 +907,11 @@ decRowLoop = function(_arg0, _arg1, _arg2, _arg3, _arg4, _arg5, _arg6)
                     end)()
                     local off5 = (off4 + b1)
                     local vol = (function()
-                        if __force(eq_Integer)(b2, 1) then
+                        if (b2 == 1) then
                             return __force(__mll_bs[2])(fd, off5)
                         else
                             return (function()
-                                if __force(eq_Integer)(b6, 1) then
+                                if (b6 == 1) then
                                     return __force(__mll_bs[2])(lv, (((ch * 4) + 2)))
                                 else
                                     return 255
@@ -921,42 +921,42 @@ decRowLoop = function(_arg0, _arg1, _arg2, _arg3, _arg4, _arg5, _arg6)
                     end)()
                     local off6 = (off5 + b2)
                     local cmd = (function()
-                        if __force(eq_Integer)(b3, 1) then
+                        if (b3 == 1) then
                             return __force(__mll_bs[2])(fd, off6)
                         else
                             return 0
                         end
                     end)()
                     local cmdVal = (function()
-                        if __force(eq_Integer)(b3, 1) then
+                        if (b3 == 1) then
                             return __force(__mll_bs[2])(fd, ((off6 + 1)))
                         else
                             return 0
                         end
                     end)()
                     local off7 = (off6 + ((function()
-                        if __force(eq_Integer)(b3, 1) then
+                        if (b3 == 1) then
                             return 2
                         else
                             return 0
                         end
                     end)()))
                     local lv2 = (function()
-                        if __force(eq_Integer)(b0, 1) then
+                        if (b0 == 1) then
                             return bsSetByte(lv, ((ch * 4)), note)
                         else
                             return lv
                         end
                     end)()
                     local lv3 = (function()
-                        if __force(eq_Integer)(b1, 1) then
+                        if (b1 == 1) then
                             return bsSetByte(lv2, (((ch * 4) + 1)), ins)
                         else
                             return lv2
                         end
                     end)()
                     local lv4 = (function()
-                        if __force(eq_Integer)(b2, 1) then
+                        if (b2 == 1) then
                             return bsSetByte(lv3, (((ch * 4) + 2)), vol)
                         else
                             return lv3
@@ -983,19 +983,19 @@ trigNote = function(_arg0, _arg1, _arg2, _arg3, _arg4, _arg5, _arg6, _arg7, _arg
     local cmdVal = __force(_arg7)
     local numSmp = __force(_arg8)
     return (function()
-        if __force(eq_Integer)(note, 254) then
+        if (note == 254) then
             return __force(__mll_ma_write)(arr, (fi(ch, fiAct)), 0)
         else
             return (function()
                 local _ = (function()
-                    if (__force(ord_gt__Integer)(ins, 0) and __force(ord_le__Integer)(ins, numSmp)) then
+                    if ((ins > 0) and (ins <= numSmp)) then
                         return __force(loadSmp)(fd, arr, ch, ins)
                     else
                         return __force(return_)(nil)
                     end
                 end)()
                 local _ = (function()
-                    if __force(ord_lt__Integer)(note, 120) then
+                    if (note < 120) then
                         return __force(setNoteFreq)(arr, ch, note)
                     else
                         return __force(return_)(nil)
@@ -1013,11 +1013,11 @@ applyVol = function(_arg0, _arg1, _arg2)
     local ch = __force(_arg1)
     local vol = __force(_arg2)
     return (function()
-        if __force(ord_le__Integer)(vol, 64) then
+        if (vol <= 64) then
             return __force(__mll_ma_write)(arr, (fi(ch, fiVol)), vol)
         else
             return (function()
-                if (__force(ord_ge__Integer)(vol, 128) and __force(ord_le__Integer)(vol, 192)) then
+                if ((vol >= 128) and (vol <= 192)) then
                     return __force(__mll_ma_write)(arr, (fi(ch, fiPan)), ((vol - 128)))
                 else
                     return __force(return_)(nil)
@@ -1033,11 +1033,11 @@ applyEffect = function(_arg0, _arg1, _arg2, _arg3)
     local cmd = __force(_arg2)
     local val = __force(_arg3)
     return (function()
-        if __force(eq_Integer)(cmd, 8) then
+        if (cmd == 8) then
             return __force(__mll_ma_write)(arr, (fi(ch, fiPan)), ((val // 4)))
         else
             return (function()
-                if (__force(eq_Integer)(cmd, 19) and __force(eq_Integer)(((val // 16)), 8)) then
+                if ((cmd == 19) and (((val // 16)) == 8)) then
                     return __force(__mll_ma_write)(arr, (fi(ch, fiPan)), ((((((val % 16)) * 17)) // 4)))
                 else
                     return __force(return_)(nil)
@@ -1153,13 +1153,13 @@ mixFrame = function(_arg0, _arg1, _arg2, _arg3, _arg4, _arg5)
     local la = __force(_arg4)
     local ra = __force(_arg5)
     return (function()
-        if __force(ord_ge__Integer)(ch, numCh) then
+        if (ch >= numCh) then
             return __force(return_)({la, ra})
         else
             return (function()
                 local act = __force(__mll_ma_read)(arr, (fi(ch, fiAct)))
                 return (function()
-                    if __force(eq_Integer)(act, 0) then
+                    if (act == 0) then
                         return mixFrame(fd, arr, numCh, ((ch + 1)), la, ra)
                     else
                         return (function()
@@ -1172,14 +1172,14 @@ mixFrame = function(_arg0, _arg1, _arg2, _arg3, _arg4, _arg5)
                             local gvl = __force(__mll_ma_read)(arr, (fi(ch, fiGVl)))
                             local smpPos = (pos // 256)
                             local smp = (function()
-                                if __force(ord_lt__Integer)(smpPos, sl) then
-                                    return readSmp(fd, dp, smpPos, (__force(eq_Integer)(is16, 1)))
+                                if (smpPos < sl) then
+                                    return readSmp(fd, dp, smpPos, ((is16 == 1)))
                                 else
                                     return 0
                                 end
                             end)()
                             local sv = (function()
-                                if __force(eq_Integer)(is16, 1) then
+                                if (is16 == 1) then
                                     return (((((smp * vol) * gvl) * 128)) // (((64 * 64) * 128)))
                                 else
                                     return ((((((smp * vol) * gvl) * 128) * 256)) // (((64 * 64) * 128)))
@@ -1212,7 +1212,7 @@ advPos = function(_arg0, _arg1)
         local lsFP = (ls * 256)
         local leFP = (le * 256)
         local fPos = (function()
-            if (__force(eq_Integer)(hl, 1) and (__force(ord_ge__Integer)(nPos, leFP) and __force(ord_gt__Integer)(leFP, lsFP))) then
+            if ((hl == 1) and ((nPos >= leFP) and (leFP > lsFP))) then
                 return (lsFP + ((((nPos - lsFP)) % ((leFP - lsFP)))))
             else
                 return nPos
@@ -1220,7 +1220,7 @@ advPos = function(_arg0, _arg1)
         end)()
         local _ = __force(__mll_ma_write)(arr, (fi(ch, fiPos)), fPos)
         return (function()
-            if (__force(eq_Integer)(hl, 0) and __force(ord_ge__Integer)(nPos, slFP)) then
+            if ((hl == 0) and (nPos >= slFP)) then
                 return __force(__mll_ma_write)(arr, (fi(ch, fiAct)), 0)
             else
                 return __force(return_)(nil)
@@ -1248,7 +1248,7 @@ doTickLoop = function(_arg0, _arg1, _arg2, _arg3, _arg4, _arg5, _arg6)
     local tick = __force(_arg5)
     local chunks = __force(_arg6)
     return (function()
-        if __force(ord_ge__Integer)(tick, speed) then
+        if (tick >= speed) then
             return __force(return_)(chunks)
         else
             return (function()
@@ -1273,7 +1273,7 @@ doRows = function(_arg0, _arg1, _arg2, _arg3, _arg4, _arg5, _arg6, _arg7, _arg8,
     local numSmp = __force(_arg10)
     local chunks = __force(_arg11)
     return (function()
-        if __force(ord_ge__Integer)(row, numRows) then
+        if (row >= numRows) then
             return (function()
                 local st2 = __force(__mll_ma_to_list)(arr)
                 return __force(return_)({chunks, st2})
@@ -1341,17 +1341,17 @@ doOrders = function(_arg0, _arg1, _arg2, _arg3, _arg4, _arg5, _arg6, _arg7, _arg
     local numSmp = __force(_arg8)
     local noLoop = __force(_arg9)
     return (function()
-        if __force(ord_ge__Integer)(idx, ordNum) then
+        if (idx >= ordNum) then
             return __force(return_)(nil)
         else
             return (function()
                 local pat = getOrder(fd, idx)
                 return (function()
-                    if __force(eq_Integer)(pat, 254) then
+                    if (pat == 254) then
                         return doOrders(fd, sw, st, ((idx + 1)), ordNum, speed, tempo, numCh, numSmp, noLoop)
                     else
                         return (function()
-                            if __force(eq_Integer)(pat, 255) then
+                            if (pat == 255) then
                                 return (function()
                                     if noLoop then
                                         return __force(return_)(nil)

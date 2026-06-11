@@ -831,6 +831,28 @@ impl CodeGen {
                 }
                 args.reverse();
 
+                // Typeclass methods on primitive types → inline as Lua operators
+                if args.len() == 2 {
+                    if let TExprKind::Var(name) = &f.kind {
+                        let lua_op = match name.as_str() {
+                            "eq_Integer" | "eq_Number" | "eq_String" | "eq_Bool" | "eq_ByteString" => Some("=="),
+                            "ord_lt__Integer" | "ord_lt__Number" | "ord_lt__String" => Some("<"),
+                            "ord_gt__Integer" | "ord_gt__Number" | "ord_gt__String" => Some(">"),
+                            "ord_le__Integer" | "ord_le__Number" | "ord_le__String" => Some("<="),
+                            "ord_ge__Integer" | "ord_ge__Number" | "ord_ge__String" => Some(">="),
+                            _ => None,
+                        };
+                        if let Some(op) = lua_op {
+                            self.emit("(");
+                            self.gen_expr(args[0]);
+                            self.emit(&format!(" {} ", op));
+                            self.gen_expr(args[1]);
+                            self.emit(")");
+                            return;
+                        }
+                    }
+                }
+
                 // Check if this is a partial application:
                 // the result type is still a function type
                 let remaining = count_arrows(&expr.ty);
