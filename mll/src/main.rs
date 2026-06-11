@@ -22,6 +22,24 @@ struct Cli {
 
 fn main() {
     let cli = Cli::parse();
+
+    // Run compilation on a thread with a large stack to handle deeply
+    // nested ASTs (e.g. 256-element list literals desugar into 256
+    // nested cons applications, each requiring a stack frame during
+    // type inference).
+    let builder = std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024); // 64 MB stack
+    let handler = builder.spawn(move || {
+        run_compiler(cli);
+    }).expect("Failed to spawn compiler thread");
+
+    if let Err(e) = handler.join() {
+        eprintln!("Compiler panicked: {:?}", e);
+        std::process::exit(1);
+    }
+}
+
+fn run_compiler(cli: Cli) {
     let filename = &cli.file;
 
     let source = match std::fs::read_to_string(filename) {
@@ -33,9 +51,20 @@ fn main() {
     };
 
     let source_dir = Path::new(filename).parent().unwrap_or(Path::new("."));
-    let lib_paths: Vec<&Path> = cli.lib_paths.iter()
+
+    // Auto-add lib/ directory relative to the compiler executable
+    let exe_dir = std::env::current_exe().ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+    let auto_lib = exe_dir.as_ref()
+        .map(|d| d.join("../../lib"))
+        .and_then(|p| p.canonicalize().ok());
+
+    let mut lib_paths: Vec<&Path> = cli.lib_paths.iter()
         .map(|p| Path::new(p.as_str()))
         .collect();
+    if let Some(ref auto) = auto_lib {
+        lib_paths.push(auto.as_path());
+    }
 
     let result = match mllc::compile(&source, source_dir, &lib_paths) {
         Ok(r) => r,

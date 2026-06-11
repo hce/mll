@@ -388,9 +388,26 @@ impl CodeGen {
                         self.gen_expr(&clause.body);
                         self.emit("\n");
                     } else {
+                        // Force params that are pattern-matched (not just var/wildcard)
+                        for (j, pat) in clause.patterns.iter().enumerate() {
+                            if !matches!(pat, TPattern::Var(_, _) | TPattern::Wildcard) {
+                                self.emit_line(&format!("_warg{} = __force(_warg{})", j, j));
+                            }
+                        }
                         self.gen_pattern_match(&params, &clauses);
                     }
                 } else {
+                    // Force params that are pattern-matched in any clause
+                    for j in 0..num_params {
+                        let needs_force = clauses.iter().any(|c| {
+                            c.patterns.get(j).map_or(false, |pat| {
+                                !matches!(pat, TPattern::Var(_, _) | TPattern::Wildcard)
+                            })
+                        });
+                        if needs_force {
+                            self.emit_line(&format!("_warg{} = __force(_warg{})", j, j));
+                        }
+                    }
                     self.gen_pattern_match(&params, &clauses);
                 }
 
@@ -562,6 +579,37 @@ impl CodeGen {
 
     /// Returns true if an expression is cheap enough that thunking it would
     /// cost more than evaluating it eagerly. This prevents thunk chain buildup
+    /// Collect elements of a literal list (cons chain ending in nil).
+    /// Returns Some(vec![elem1, elem2, ...]) if the list has >= 8 literal elements,
+    /// None otherwise (let normal cons generation handle short lists).
+    fn collect_list_literal<'a>(expr: &'a TExpr) -> Option<Vec<&'a TExpr>> {
+        let mut elems = Vec::new();
+        let mut cur = expr;
+        loop {
+            match &cur.kind {
+                TExprKind::App(func, tail) => {
+                    if let TExprKind::App(inner_f, elem) = &func.kind {
+                        if let TExprKind::Con(name) = &inner_f.kind {
+                            if name == ":" {
+                                elems.push(elem.as_ref());
+                                cur = tail.as_ref();
+                                continue;
+                            }
+                        }
+                    }
+                    return None;
+                }
+                TExprKind::Con(name) if name == "[]" => {
+                    if elems.len() >= 8 {
+                        return Some(elems);
+                    }
+                    return None;
+                }
+                _ => return None,
+            }
+        }
+    }
+
     /// in accumulator patterns while preserving laziness for expensive
     /// computations (user function calls).
     fn is_cheap(expr: &TExpr) -> bool {
@@ -648,6 +696,17 @@ impl CodeGen {
                 if let TExprKind::App(inner_f, inner_arg) = &func.kind {
                     if let TExprKind::Con(name) = &inner_f.kind {
                         if name == ":" {
+                            // Try to collect a literal list and emit compactly
+                            if let Some(elems) = Self::collect_list_literal(expr) {
+                                self.emit("(function() local _l = nil; ");
+                                for elem in elems.iter().rev() {
+                                    self.emit("_l = __mll_cons(");
+                                    self.gen_expr(elem);
+                                    self.emit(", _l); ");
+                                }
+                                self.emit("return _l end)()");
+                                return;
+                            }
                             self.emit("__mll_cons(");
                             self.gen_expr(inner_arg);
                             self.emit(", ");
@@ -1353,4 +1412,26 @@ end
 local function exit_(code)
     if code == 1 then os.exit(0) else os.exit(code[2]) end
 end
+
+-- Bitwise operations (Lua 5.4 native operators wrapped as functions)
+local function __mll_bxor(a, b) return __force(a) ~ __force(b) end
+local function __mll_band(a, b) return __force(a) & __force(b) end
+local function __mll_bor(a, b) return __force(a) | __force(b) end
+local function __mll_bnot(a) return ~__force(a) end
+local function __mll_shl(a, b) return __force(a) << __force(b) end
+local function __mll_shr(a, b) return __force(a) >> __force(b) end
+
+-- Array primitives (O(1) indexed access, built from MLL lists)
+local function __mll_array_from_list(xs)
+    xs = __force(xs)
+    local arr = {}
+    local cur = xs
+    while cur ~= nil do
+        arr[#arr + 1] = __force(__mll_head(cur))
+        cur = __mll_tail(cur)
+    end
+    return arr
+end
+local function __mll_array_index(arr, i) return __force(arr)[__force(i) + 1] end
+local function __mll_array_length(arr) return #__force(arr) end
 "#;
