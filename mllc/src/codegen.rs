@@ -991,8 +991,10 @@ impl CodeGen {
             }
             TExprKind::InfixApp { op, lhs, rhs } if op == ">>" => {
                 // action >> rest  =>  action; rest
+                // Unwrap Paren to avoid Lua syntax issues with (expr) as statement
+                let lhs_unwrapped = if let TExprKind::Paren(inner) = &lhs.kind { inner.as_ref() } else { lhs.as_ref() };
                 self.emit_indent();
-                self.gen_action(lhs);
+                self.gen_action(lhs_unwrapped);
                 self.emit("\n");
                 self.gen_bind_chain(rhs);
                 return;

@@ -421,8 +421,20 @@ doOrders fd sw st idx ordNum speed tempo numCh numSmp noLoop playedPositions =
                  in emitChunks sw (reverse chunks)
                         >> doOrders fd sw st2 (idx + 1) ordNum speed tempo numCh numSmp noLoop (idx:playedPositions)
 
+-- Find IMPM magic to skip UMX/container headers.
+-- Returns the offset of 'I' in 'IMPM', or 0 if the file starts with it.
+findIMPM :: ByteString -> Integer -> Integer
+findIMPM bs i =
+    if i + 3 >= bsLength bs then 0
+    else if bsIndex bs i == 73 && bsIndex bs (i + 1) == 77 && bsIndex bs (i + 2) == 80 && bsIndex bs (i + 3) == 77
+    then i
+    else findIMPM bs (i + 1)
+
 export play :: (ByteString -> LuaIO s ()) -> ByteString -> Bool -> LuaIO s ()
 play swallower fd noLoop =
-    let numCh = 22
-        st    = initChans fd numCh 0
-    in doOrders fd swallower st 0 (hdrOrdNum fd) (hdrSpeed fd) (hdrTempo fd) numCh (hdrSmpNum fd) noLoop []
+    (liftIO $ putStrLn "Pure mata-ll Impulse Tracker decoder") >>
+    let offset = findIMPM fd 0
+        itData = if offset == 0 then fd else bsSub fd offset (bsLength fd - offset)
+        numCh  = 64
+        st     = initChans itData numCh 0
+    in doOrders itData swallower st 0 (hdrOrdNum itData) (hdrSpeed itData) (hdrTempo itData) numCh (hdrSmpNum itData) noLoop []
