@@ -11,6 +11,10 @@ struct CodeGen {
     forward_declared: std::collections::HashSet<String>,
     /// Variables known to hold concrete values (not thunks), skip __force
     concrete_vars: std::collections::HashSet<String>,
+    /// Whole-program call-site analysis: for each function, which param
+    /// positions are always passed cheap (non-thunk) arguments at every call site.
+    /// If true, the param never needs __force at entry.
+    params_always_cheap: std::collections::HashMap<String, Vec<bool>>,
     output: String,
     indent: usize,
 }
@@ -21,6 +25,7 @@ impl CodeGen {
             constructors: Vec::new(), newtypes: Vec::new(),
             forward_declared: std::collections::HashSet::new(),
             concrete_vars: std::collections::HashSet::new(),
+            params_always_cheap: std::collections::HashMap::new(),
             output: String::new(), indent: 0,
         }
     }
@@ -151,6 +156,10 @@ impl CodeGen {
                 self.forward_declared.insert(name.clone());
             }
         }
+
+        // Whole-program call-site analysis: determine which function params
+        // are always passed cheap (non-thunk) arguments at every call site.
+        self.analyze_call_sites(module);
 
         // Emit functions (main last, so specializations are defined before use)
         let mut main_fn = None;
@@ -311,15 +320,24 @@ impl CodeGen {
 
             let all_simple = clause.patterns.iter().all(|p| matches!(p, TPattern::Var(_, _) | TPattern::Wildcard));
             if all_simple {
-                // Strictness approximation: force params that appear in the body.
-                // Unused params stay lazy (e.g. fibHack _count = fibs 10240000).
+                // Mark params concrete based on call-site analysis:
+                // if all callers pass cheap args, skip __force entirely.
+                // Otherwise, force if the param is used in the body (strictness).
+                let call_site_cheap = self.params_always_cheap.get(&func.name).cloned();
                 for (i, pat) in clause.patterns.iter().enumerate() {
                     if let TPattern::Var(v, _) = pat {
                         let sname = sanitize_name(v);
-                        if expr_references_name(&clause.body, v) {
+                        let always_cheap = call_site_cheap.as_ref().map_or(false, |v| v.get(i).copied().unwrap_or(false));
+                        if always_cheap {
+                            // All callers pass concrete values — no __force needed
+                            self.emit_line(&format!("local {} = _arg{}", sname, i));
+                            self.concrete_vars.insert(sname);
+                        } else if expr_references_name(&clause.body, v) {
+                            // Used in body, might be a thunk — force at entry
                             self.emit_line(&format!("local {} = __force(_arg{})", sname, i));
                             self.concrete_vars.insert(sname);
                         } else {
+                            // Unused — stay lazy
                             self.emit_line(&format!("local {} = _arg{}", sname, i));
                         }
                     }
@@ -367,16 +385,23 @@ impl CodeGen {
         self.emit("\n");
         self.indent += 1;
         self.concrete_vars.insert(lua_name.clone());
-        // Force only args that are destructured (not just var/wildcard bindings)
-        // — forcing unused params would break lazy semantics (e.g. custom if blocks)
+        // Force params that are destructured OR where call-site analysis
+        // shows all callers pass cheap args (so the value is already concrete).
+        let call_site_cheap = self.params_always_cheap.get(&func.name).cloned();
         for (i, p) in params.iter().enumerate() {
+            if i >= num_params { break; }
+            let always_cheap = call_site_cheap.as_ref().map_or(false, |v| v.get(i).copied().unwrap_or(false));
             let needs_force = clauses.iter().any(|c| {
                 c.patterns.get(i).map_or(false, |pat| {
                     !matches!(pat, TPattern::Var(_, _) | TPattern::Wildcard)
                 })
             });
             if needs_force {
+                // Destructured param — must force for pattern matching
                 self.emit_line(&format!("{} = __force({})", p, p));
+                self.concrete_vars.insert(p.clone());
+            } else if always_cheap {
+                // All callers pass concrete values — mark concrete, no force needed
                 self.concrete_vars.insert(p.clone());
             }
         }
@@ -698,6 +723,98 @@ impl CodeGen {
             }
             // Function calls, case, let — potentially expensive, thunk them
             _ => false,
+        }
+    }
+
+    /// Whole-program call-site analysis. For each function, determine which
+    /// parameter positions always receive cheap (non-thunk) arguments.
+    fn analyze_call_sites(&mut self, module: &TModule) {
+        // Initialize: for each function, track (ever_thunked, ever_called) per param
+        let mut ever_thunked: std::collections::HashMap<String, Vec<bool>> = std::collections::HashMap::new();
+        let mut ever_called: std::collections::HashMap<String, Vec<bool>> = std::collections::HashMap::new();
+        for func in module.functions.iter().chain(module.instance_fns.iter()) {
+            let num_params = func.clauses.iter().map(|c| c.patterns.len()).max().unwrap_or(0);
+            if num_params > 0 {
+                ever_thunked.insert(func.name.clone(), vec![false; num_params]);
+                ever_called.insert(func.name.clone(), vec![false; num_params]);
+            }
+        }
+        // Scan all function bodies (and where-clause bodies) for call sites
+        for func in module.functions.iter().chain(module.instance_fns.iter()) {
+            for clause in &func.clauses {
+                Self::scan_call_sites(&clause.body, &mut ever_thunked, &mut ever_called);
+                for wb in &clause.where_binds {
+                    Self::scan_call_sites(&wb.body, &mut ever_thunked, &mut ever_called);
+                }
+            }
+        }
+        // A param is always-cheap only if it was called at least once and
+        // never received a thunk at any call site.
+        for (name, thunked) in &ever_thunked {
+            if let Some(called) = ever_called.get(name) {
+                let cheap: Vec<bool> = thunked.iter().zip(called.iter())
+                    .map(|(t, c)| *c && !*t)
+                    .collect();
+                self.params_always_cheap.insert(name.clone(), cheap);
+            }
+        }
+    }
+
+    fn scan_call_sites(expr: &TExpr,
+        ever_thunked: &mut std::collections::HashMap<String, Vec<bool>>,
+        ever_called: &mut std::collections::HashMap<String, Vec<bool>>,
+    ) {
+        match &expr.kind {
+            TExprKind::App(_, _) => {
+                let mut args: Vec<&TExpr> = vec![];
+                let mut f = expr;
+                while let TExprKind::App(inner_f, inner_arg) = &f.kind {
+                    args.push(inner_arg.as_ref());
+                    f = inner_f.as_ref();
+                }
+                args.reverse();
+                if let TExprKind::Var(name) = &f.kind {
+                    if let Some(thunked) = ever_thunked.get_mut(name.as_str()) {
+                        let called = ever_called.get_mut(name.as_str()).unwrap();
+                        for (i, arg) in args.iter().enumerate() {
+                            if i < thunked.len() {
+                                called[i] = true;
+                                if !Self::is_cheap_arg(arg) {
+                                    thunked[i] = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                for arg in &args {
+                    Self::scan_call_sites(arg, ever_thunked, ever_called);
+                }
+                if !matches!(&f.kind, TExprKind::Var(_) | TExprKind::Con(_)) {
+                    Self::scan_call_sites(f, ever_thunked, ever_called);
+                }
+            }
+            TExprKind::InfixApp { lhs, rhs, .. } => {
+                Self::scan_call_sites(lhs, ever_thunked, ever_called);
+                Self::scan_call_sites(rhs, ever_thunked, ever_called);
+            }
+            TExprKind::Lambda { body, .. } => Self::scan_call_sites(body, ever_thunked, ever_called),
+            TExprKind::If { cond, then_branch, else_branch } => {
+                Self::scan_call_sites(cond, ever_thunked, ever_called);
+                Self::scan_call_sites(then_branch, ever_thunked, ever_called);
+                Self::scan_call_sites(else_branch, ever_thunked, ever_called);
+            }
+            TExprKind::Let { binds, body } => {
+                for bind in binds { Self::scan_call_sites(&bind.body, ever_thunked, ever_called); }
+                Self::scan_call_sites(body, ever_thunked, ever_called);
+            }
+            TExprKind::Case { scrutinee, branches } => {
+                Self::scan_call_sites(scrutinee, ever_thunked, ever_called);
+                for b in branches { Self::scan_call_sites(&b.body, ever_thunked, ever_called); }
+            }
+            TExprKind::Paren(inner) | TExprKind::Negate(inner) => Self::scan_call_sites(inner, ever_thunked, ever_called),
+            TExprKind::Tuple(elems) => { for e in elems { Self::scan_call_sites(e, ever_thunked, ever_called); } }
+            TExprKind::SpecCall { args, .. } => { for a in args { Self::scan_call_sites(a, ever_thunked, ever_called); } }
+            _ => {}
         }
     }
 
