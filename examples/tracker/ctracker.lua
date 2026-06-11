@@ -1,4 +1,23 @@
-local tracker = require "tracker"
+local tracker
+local load_succ, load_err_msg = pcall(function()
+	tracker = require "tracker"
+end)
+if not load_succ then
+	print([[
+
+Before you can run this file, you need to compile the tracker.mll to
+Lua using the mata-ll compiler.
+
+    cargo run -- tracker.mll
+
+Then run ctracker.lua while setting the cwd to the path it and
+tracker.lua both reside in.
+
+]])
+
+	print("Error: " .. tostring(load_err_msg))
+	return
+end
 
 local function mk_process_chunk(handle, verbose)
 	local count = 1
