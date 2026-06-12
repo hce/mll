@@ -23,6 +23,9 @@ appI (x:xs) ys = x : appI xs ys
 hdrOrdNum :: ByteString -> Integer
 hdrOrdNum bs = bsGetU16LE bs 32
 
+hdrInsNum :: ByteString -> Integer
+hdrInsNum bs = bsGetU16LE bs 34
+
 hdrSmpNum :: ByteString -> Integer
 hdrSmpNum bs = bsGetU16LE bs 36
 
@@ -51,7 +54,7 @@ countActiveChans bs n i =
 -- ========== Sample Headers ==========
 
 smpOffset :: ByteString -> Integer -> Integer
-smpOffset bs i = bsGetU32LE bs (192 + hdrOrdNum bs + i * 4)
+smpOffset bs i = bsGetU32LE bs (192 + hdrOrdNum bs + hdrInsNum bs * 4 + i * 4)
 
 smpLen :: ByteString -> Integer -> Integer
 smpLen bs off = bsGetU32LE bs (off + 48)
@@ -93,7 +96,7 @@ readSmp bs dPtr pos is16 =
 -- ========== Pattern Headers ==========
 
 patOffset :: ByteString -> Integer -> Integer
-patOffset bs i = bsGetU32LE bs (192 + hdrOrdNum bs + hdrSmpNum bs * 4 + i * 4)
+patOffset bs i = bsGetU32LE bs (192 + hdrOrdNum bs + hdrInsNum bs * 4 + hdrSmpNum bs * 4 + i * 4)
 
 patRows :: ByteString -> Integer -> Integer
 patRows bs off = bsGetU16LE bs (off + 2)
