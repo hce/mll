@@ -20,9 +20,14 @@ Lua tables with continuous integer keys (i.e., arrays) should be written as
 
 Where a is the type of the items contained inside the array.
 
-Lua dictionaries should have their own, intrinsic MATA-LL type:
+Lua dictionaries have their own intrinsic MATA-LL type:
 
-    data HashMap k v = HashMap k v
+    intrinsic HashMap :: Type -> Type -> Type
+
+HashMap is a compiler built-in backed by Lua tables, not a
+user-defined ADT. Built-in operations include hashmap_lookup,
+hashmap_insert, hashmap_delete, hashmap_keys, hashmap_values,
+hashmap_member, and hashmap_fromList.
 
 We support haskell's algebraic datatypes:
 
@@ -65,10 +70,11 @@ And also newtype:
 
     newtype A = A Integer
 
-In order to make it easier to interact with plain Lua, we should predefine:
+In order to make it easier to interact with plain Lua, the prelude
+defines:
 
-    data Any = String s | Integer i | Number n | Bool b
-             | Null | UserData | Coroutine
+    data Any = AnyString String | AnyInteger Integer
+             | AnyNumber Number | AnyBool Bool | AnyNull
 
 Though this should rarely be used.
 
@@ -295,10 +301,10 @@ prefix but are distinct. The type family `LuaIO "name" T` reduces
 to `IO T` (plain IO). The monad `LuaIO s a` is a separate type
 that carries the scope tag.
 
-To avoid confusion, the FFI type family could be renamed in a
-future revision, but for now the distinction is: if there is a
-string literal, it is the FFI type family; if there is a type
-variable, it is the scoped monad.
+The parser disambiguates the two forms syntactically: if the first
+argument is a string literal, it is the FFI type family; if it is a
+type variable, it is the scoped monad. These are represented as
+distinct AST nodes internally.
 
 ## Runtime representation
 
@@ -372,13 +378,15 @@ Monads are just like in haskell:
         (<$) :: a -> f b -> f a
         (<$) = fmap . const
 
+    -- NOTE: Applicative is not yet implemented. The following is the
+    -- target definition for a future version.
     class Applicative m where
         pure  :: a -> m a
-        (<*>) :: f (a -> b) -> f a -> f b
-        (*>)  :: f a -> f b -> f b
+        (<*>) :: m (a -> b) -> m a -> m b
+        (*>)  :: m a -> m b -> m b
         a1 *> a2 = (id <$ a1) <*> a2
-        (<*)  :: f a -> f b -> f a
-        a1 <* a2 = const id <$ a1 <*> a2 <*> a2
+        (<*)  :: m a -> m b -> m a
+        a1 <* a2 = const <$> a1 <*> a2
 
     class Monad m where
         (>>=)  :: m a -> (a -> m b) -> m b
@@ -461,13 +469,18 @@ The compiler may inline functions whenever deemed necessary.
 
 ## Pattern matching
 
-Pattern matching should be supported both for function definitions, as
-well as for case blocks and assignments. For assignments, we need to
-distinguish between "single-case assignments" such as a let or <-
-assignment inside a do block. Here, pattern mismatch should raise an
-error. Multi-case assignments include where and let assignments
-outside of do blocks. Here, the compiler should enforce exhaustive
-definitions.
+Pattern matching is supported for function definitions, case blocks,
+and assignments.
+
+NOTE: The following distinction is aspirational and not yet
+implemented. Currently all non-exhaustive patterns produce a runtime
+error via a fallback.
+
+For assignments, we want to distinguish between "single-case
+assignments" such as a let or <- assignment inside a do block. Here,
+pattern mismatch should raise an error. Multi-case assignments
+include where and let assignments outside of do blocks. Here, the
+compiler should enforce exhaustive definitions.
 
 Pattern matching semantics:
 
@@ -496,8 +509,8 @@ Could translate into:
 # Standalone MATA-LL
 
 The compiler looks for a declaration of main at the top level and if
-it finds one, compiles the .mll file to a standalone .o file along
-with a stub wrapper in plain Lua that calls it:
+it finds one, compiles the .mll file to a standalone .lua file with
+a stub at the end that calls into it:
 
 
 my.mll
@@ -505,13 +518,13 @@ my.mll
     main :: IO ()
     main = ...
 
-Lua wrapper:
+The generated .lua file ends with a call to __run():
 
-    local mata_ll_mod__my = require("my")
-    mata_ll_mod__my.__run()
+    __run()
 
-We call .__run, not .main, because main is not declared as a function
-exported to Lua.
+We call __run, not main, because main is not declared as a function
+exported to Lua. The compiler can also execute the result directly
+via the embedded mlua runtime when invoked with --run.
 
 Command line arguments are not passed to main, nor is a return value
 passed back to the OS.
@@ -519,7 +532,7 @@ passed back to the OS.
 For both, library functions should be used:
 
   getArgs :: IO [String]
-  exit :: IO ExitValue
+  exit :: ExitValue -> IO ()
 
   data ExitValue = Normal | Err Integer
 
@@ -559,7 +572,7 @@ The syntax is just like in haskell:
 Both in pure and monadic code. In monadic code, we offer when in
 addition:
 
-    when :: Monad m => Bool -> m a -> m ()
+    when :: Bool -> IO () -> IO ()
     when cond what = if cond then what >> pure () else pure ()
 
 # let/in and where
