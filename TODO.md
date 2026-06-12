@@ -47,6 +47,8 @@ MATA-LL TODO
 - [x] ByteString intrinsic type with binary I/O operations
 - [x] Standard library: Regex, JSON, LOS, LString, LBit modules
 - [x] Export keyword for Lua interop (export foo :: ...)
+- [x] Polymorphic recursion via dictionary-passing fallback
+- [x] Type substitution in monomorphized specializations
 
 ## Typeclasses and dispatch
 

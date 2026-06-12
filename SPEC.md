@@ -632,10 +632,33 @@ Orphan instance rules? Disallowed.
 
 # Typeclass dispatch strategy
 
-Via monomorphization. Monomorphization avoids runtime overhead but increases
-code size and cannot handle polymorphic recursion. Polymorphic recursion
-is explicitly unsupported; the compiler must detect it and emit a clear
-error.
+Via monomorphization. The compiler generates a specialized copy of
+each polymorphic function for every concrete type it is instantiated
+at. This eliminates dictionary-passing overhead at runtime, which
+matters for the Lua target where every extra table lookup and closure
+allocation is felt.
+
+Polymorphic recursion — where a function calls itself at a
+progressively different type — is supported via a fallback to
+dictionary-passing. When monomorphization would diverge (more than
+16 specializations of the same function), the compiler switches
+that function to dictionary-passing: typeclass methods are looked
+up from a Lua table parameter instead of being resolved statically.
+
+    data Deep a = DNil | DCons a (Deep (Box a))
+
+    showDeep :: Show a => Deep a -> String
+    showDeep DNil = "end"
+    showDeep (DCons x rest) = show x ++ " > " ++ showDeep rest
+
+Here `showDeep` calls itself at `Deep (Box a)`, then
+`Deep (Box (Box a))`, etc. The compiler generates up to 16
+monomorphized copies (which handle the common shallow cases with
+zero overhead), then falls back to a single dictionary-threaded
+version for deeper nesting. Call sites pass concrete dictionaries
+as Lua tables:
+
+    showDeep({ show = show_Integer }, value)
 
 # Module and import syntax
 
@@ -809,7 +832,6 @@ The following are known limitations of the current implementation:
 
 - Lambda pattern matching (patterns not supported in lambda args)
 - FFI varargs (e.g. Lua's string.format)
-- Polymorphic recursion (explicitly forbidden; the compiler detects and rejects it)
 - Multi-line function application (arguments on continuation lines)
   needs layout rule refinement to distinguish from new declarations
 - Multi-binding `let` in `do` blocks (each binding needs its own `let`)

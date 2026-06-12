@@ -1380,6 +1380,7 @@ impl Checker {
             ty: fn_ty,
             clauses,
             specialized: false,
+            dict_params: vec![],
         }]
     }
 
@@ -1503,6 +1504,7 @@ impl Checker {
             ty: fn_ty,
             clauses,
             specialized: false,
+            dict_params: vec![],
         }]
     }
 
@@ -1657,6 +1659,7 @@ impl Checker {
             ty: final_ty,
             clauses: tclauses,
             specialized: false,
+            dict_params: vec![],
         })
     }
 
@@ -2133,6 +2136,7 @@ impl Checker {
                     where_binds: vec![],
                 }],
                 specialized: false,
+            dict_params: vec![],
             };
         }
 
@@ -2188,6 +2192,7 @@ impl Checker {
                 where_binds: vec![],
             }],
             specialized: false,
+            dict_params: vec![],
         }
     }
 
