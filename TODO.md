@@ -39,6 +39,14 @@ MATA-LL TODO
 - [x] LIO library (file handles, stdin/stdout)
 - [x] LMath library (math.* bindings)
 - [x] CI pipeline with auto-merge dev → main
+- [x] String escape sequences in codegen (\n, \t, \\, \" properly escaped)
+- [x] Eq for tuples (element-wise comparison with type dispatch)
+- [x] LuaTry type family (Lua nil-means-error → Either String a)
+- [x] Operator fixity declarations (infixl, infixr, infix)
+- [x] STArray with rank-2 scoped mutability (runST, newSTArray, etc.)
+- [x] ByteString intrinsic type with binary I/O operations
+- [x] Standard library: Regex, JSON, LOS, LString, LBit modules
+- [x] Export keyword for Lua interop (export foo :: ...)
 
 ## Typeclasses and dispatch
 
@@ -54,20 +62,20 @@ MATA-LL TODO
 - [x] getArgs :: IO [String]
 - [x] exit :: IO ExitValue (data ExitValue = Normal | Err Integer)
 
+## Codegen optimizations
+
+- [x] Prelude runtime functions seeded as concrete
+- [x] Monadic bind chain flattening (do-blocks → flat IIFEs)
+- [x] If-expressions as statements in bind chain terminals
+- [x] Small pure function inlining at call sites
+- [x] Typeclass methods inlined as Lua operators
+- [x] Whole-program call-site analysis for parameter concreteness
+- [x] Eliminating __mll_run: compile-time type info instead of runtime introspection
+
 ## Open
 
-- [x] String escape sequences in codegen (\n, \t, \\, \" properly escaped)
-- [x] Eq for tuples (element-wise comparison with type dispatch)
-- [x] LuaTry type family (Lua nil-means-error → Either String a)
 - [ ] Zero-arg LuaIterator (stdinLines) needs IO wrapping to avoid eager eval
-
-## Type system
-
 - [ ] Monadic operators (>>=, >>, return, pure) use hardcoded unification for IO/LuaIO instead of proper Monad typeclass dispatch — revisit once typeclass infrastructure is more mature
-
-## String types (design decision)
-
-String = Lua string permanently. ByteString = Lua string with explicit byte semantics (same runtime representation, type-level distinction only). Text = future UTF-8 type over ByteString, if/when Unicode support is needed.
 
 ## Parser
 
@@ -75,8 +83,11 @@ String = Lua string permanently. ByteString = Lua string with explicit byte sema
 - [ ] Multi-binding `let` in `do` blocks (currently need separate `let` per binding)
 - [ ] Guards in combination with `where` clauses (parser returns early for guarded clauses)
 
-## Can defer (spec says so)
+## Can defer
 
-- [ ] Operator fixity declarations (Haskell defaults hardcoded)
 - [ ] Lambda pattern matching
 - [ ] FFI varargs support for Lua functions like string.format
+
+## String types (design decision)
+
+String = Lua string permanently. ByteString = Lua string with explicit byte semantics (same runtime representation, type-level distinction only). Text = future UTF-8 type over ByteString, if/when Unicode support is needed.

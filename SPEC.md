@@ -655,7 +655,8 @@ exports to plain Lua are allowed that way.
 
 Functions: show, putStrLn, print, (++), ($), max, min, const, id,
            (.), flip, map, filter, foldl, foldr, sqrt, not, (&&),
-           (||), error, otherwise
+           (||), error, otherwise, head, tail, take, zipWith, elem,
+           length, reverse, fst, snd, mapM_, when, assert, seq
 
     (++)  :: String -> String -> String
     ($)   :: (a -> b) -> a -> b
@@ -665,6 +666,8 @@ Functions: show, putStrLn, print, (++), ($), max, min, const, id,
     flip  :: (a -> b -> c) -> b -> a -> c
     error :: String -> a
     otherwise :: Bool  -- defined as True
+    seq   :: a -> b -> b  -- explicit forcing
+    assert :: Bool -> String -> IO ()
 
 Comparison and equality operators are methods of Eq and Ord:
 
@@ -673,19 +676,144 @@ Comparison and equality operators are methods of Eq and Ord:
     compare :: Ord a => a -> a -> Ordering
     data Ordering = LT | EQ | GT
 
-Typeclasses: Show, Eq, Ord
+Typeclasses: Show, Eq, Ord, Functor, Applicative, Monad
 
-Types: Maybe (Just, Nothing), Either (Left, Right), IO, Ordering
+Types: Maybe (Just, Nothing), Either (Left, Right), IO, Ordering,
+       ExitValue (Normal, Err), Any
 
-# Can defer in prototype
+# Operator fixity declarations
 
-The following are needed eventually but can be hardcoded or skipped
-in a first prototype:
+User-defined fixity is supported:
 
-- Operator precedence and fixity declarations (hardcode Haskell defaults)
-- GADTs (regular ADTs suffice initially)
-- User-defined type families (hardcode the FFI ones)
-- Partial application (properly implement)
-- Indentation sensitivity vs explicit delimiters => Must support full
-  haskell syntax
-- Exporting MATA-LL functions to plain Lua (syntax TBD)
+    infixl 6 +
+    infixr 5 :
+    infix 4 ==
+
+Precedence levels 0-9, with left, right, or no associativity.
+Haskell defaults are used for standard operators when no declaration
+is given.
+
+# Deriving
+
+Automatic instance generation is supported for Show and Eq:
+
+    data Color = Red | Green | Blue
+        deriving (Show, Eq)
+
+The compiler generates the obvious structural instances.
+
+# Export
+
+Functions can be exported to plain Lua via the `export` keyword:
+
+    export fibonacci :: Integer -> [Integer]
+    fibonacci = flip take fib
+
+Exported functions appear in the module's return table and are
+callable from Lua. Only functions can be exported.
+
+# STArray (mutable arrays)
+
+`STArray s` is an intrinsic mutable integer array scoped to `ST s`.
+It uses the same rank-2 scope-sealing technique as `LuaIO s`:
+
+    runST        :: (forall s. ST s a) -> a
+    newSTArray   :: Integer -> Integer -> ST s (STArray s)
+    readSTArray  :: STArray s -> Integer -> ST s Integer
+    writeSTArray :: STArray s -> Integer -> Integer -> ST s ()
+    modifySTArray :: STArray s -> Integer -> (Integer -> Integer) -> ST s ()
+    stArrayLength :: STArray s -> ST s Integer
+    newSTArrayFromList :: [Integer] -> ST s (STArray s)
+    stArrayToList :: STArray s -> ST s [Integer]
+
+`ST s` is the same runtime as IO but with a type-level distinction.
+The `forall s.` in `runST` prevents mutable state from escaping.
+
+# ByteString
+
+`ByteString` is an intrinsic type backed by Lua strings with
+explicit byte semantics. Same runtime representation as String but
+with a type-level distinction. All operations are intrinsic.
+
+Construction: bsEmpty, bsSingleton, bsCons, bsSnoc, bsConcat,
+bsConcatList, bsReplicate, bsPack.
+
+Deconstruction: bsHead, bsTail, bsUnpack.
+
+Query: bsLength, bsIndex, bsNull, bsSub.
+
+Transforms: bsMap, bsFoldl, bsXor, bsZipWith.
+
+Conversion: bsToString, bsFromString.
+
+Binary: bsGetI8, bsGetI16LE, bsPutI16LE, bsGetU16LE, bsGetU32LE.
+
+Indices are 0-based.
+
+# Standard library modules
+
+The prelude is auto-imported. Additional modules live in `lib/` and
+are imported explicitly:
+
+    import ByteString    -- byte sequence operations
+    import LIO           -- file I/O (fOpen, fRead, fWrite, ...)
+    import LMath         -- math.* bindings (sin, cos, random, ...)
+    import LOS           -- OS functions
+    import LString       -- string utilities
+    import LBit          -- bitwise operations
+    import Regex         -- CPS-based regex matcher
+    import JSON          -- hand-written JSON parser
+
+# Evaluation strategy
+
+MATA-LL uses non-strict evaluation. Function arguments and let/where
+bindings are wrapped in memoizing thunks by default.
+
+Cheapness analysis avoids thunking expressions that are cheaper to
+evaluate than to thunk: literals, variable references, constructor
+applications, arithmetic, tuple construction, and cheap
+if-expressions.
+
+`seq :: a -> b -> b` forces its first argument before returning the
+second.
+
+The compiler tracks concrete variables (already-forced values) to
+skip redundant `__force` calls at runtime. Function parameters forced
+at entry, top-level bindings, and monadic bind continuation
+parameters are marked concrete.
+
+# Compilation pipeline
+
+    .mll source
+        ↓
+    Lexer — tokenize with layout-sensitive indentation tracking
+        ↓
+    Parser — parse to AST (including fixity declarations)
+        ↓
+    Desugar — do-notation to >>= chains
+        ↓
+    Type checker — HM unification + bidirectional checking,
+                   exhaustiveness checking, kind checking
+        ↓
+    Monomorphizer — specialize polymorphic functions per type
+        ↓
+    Code generator — Lua source with optimizations
+                     (bind chain flattening, function inlining,
+                      cheapness analysis, concrete variable tracking)
+        ↓
+    .lua output (standalone, no runtime needed)
+
+# Deferred / limitations
+
+The following are known limitations of the current implementation:
+
+- Lambda pattern matching (patterns not supported in lambda args)
+- FFI varargs (e.g. Lua's string.format)
+- Polymorphic recursion (explicitly forbidden; the compiler detects and rejects it)
+- Multi-line function application (arguments on continuation lines)
+  needs layout rule refinement to distinguish from new declarations
+- Multi-binding `let` in `do` blocks (each binding needs its own `let`)
+- Guards combined with `where` clauses (parser returns early for
+  guarded clauses)
+- Zero-arg LuaIterator (e.g. stdinLines) needs IO wrapping to avoid
+  eager evaluation
