@@ -467,3 +467,8 @@ play swallower fd noLoop =
         numCh  = countActiveChans itData 0 0
         st     = initChans itData numCh 0
     in doOrders itData swallower st 0 (hdrOrdNum itData) (hdrSpeed itData) (hdrTempo itData) numCh (hdrSmpNum itData) noLoop []
+
+main :: IO ()
+main = putStrLn "ImpulseTracker player written in mata-ll (https://matall.org)" >>
+    putStrLn "This is a Lua/mata-ll interop via callbacks example; please" >>
+    putStrLn "Invoke via ctracker.lua from the same directory instead."
