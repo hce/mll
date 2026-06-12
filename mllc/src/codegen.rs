@@ -239,7 +239,7 @@ impl CodeGen {
                 self.emit_indent();
                 self.emit("for i = 1, args.n do if type(args[i]) == \"function\" then args[i] = __mll_wrap_callback(args[i]) end end\n");
                 self.emit_indent();
-                self.emit(&format!("return __mll_to_lua({sname}(unpack(args, 1, args.n)))\n"));
+                self.emit(&format!("return __mll_to_lua({sname}(__unpack(args, 1, args.n)))\n"));
                 self.indent -= 1;
                 self.emit_indent();
                 self.emit("end,\n");
@@ -1852,6 +1852,7 @@ pub fn generate(module: &TModule) -> String {
 }
 
 const PRELUDE: &str = r#"-- MLL Runtime
+local __unpack = table.unpack or unpack
 
 -- Thunk infrastructure (non-strict evaluation)
 local __thunk_mt = {}
@@ -1910,7 +1911,7 @@ local function __mll_wrap_callback(f)
     return function(...)
         local args = {n = select('#', ...), ...}
         for i = 1, args.n do args[i] = __mll_to_lua(args[i]) end
-        return f(unpack(args, 1, args.n))
+        return f(__unpack(args, 1, args.n))
     end
 end
 
@@ -2075,13 +2076,13 @@ end
 
 -- Bitwise operations (Lua 5.3+ native, LuaJIT bit.*, or bit32)
 local __mll_bxor, __mll_band, __mll_bor, __mll_bnot, __mll_shl, __mll_shr
-if (load or loadstring)('return 0 ~ 0') then
-    __mll_bxor = (load or loadstring)('local F=... return function(a,b) return F(a) ~ F(b) end')(__force)
-    __mll_band = (load or loadstring)('local F=... return function(a,b) return F(a) & F(b) end')(__force)
-    __mll_bor  = (load or loadstring)('local F=... return function(a,b) return F(a) | F(b) end')(__force)
-    __mll_bnot = (load or loadstring)('local F=... return function(a) return ~F(a) end')(__force)
-    __mll_shl  = (load or loadstring)('local F=... return function(a,b) return F(a) << F(b) end')(__force)
-    __mll_shr  = (load or loadstring)('local F=... return function(a,b) return F(a) >> F(b) end')(__force)
+if (loadstring or load)('return 0 ~ 0') then
+    __mll_bxor = (loadstring or load)('local F=... return function(a,b) return F(a) ~ F(b) end')(__force)
+    __mll_band = (loadstring or load)('local F=... return function(a,b) return F(a) & F(b) end')(__force)
+    __mll_bor  = (loadstring or load)('local F=... return function(a,b) return F(a) | F(b) end')(__force)
+    __mll_bnot = (loadstring or load)('local F=... return function(a) return ~F(a) end')(__force)
+    __mll_shl  = (loadstring or load)('local F=... return function(a,b) return F(a) << F(b) end')(__force)
+    __mll_shr  = (loadstring or load)('local F=... return function(a,b) return F(a) >> F(b) end')(__force)
 else
     local __mll_bit = (type(jit) == 'table' and require('bit')) or bit32 or require('bit')
     function __mll_bxor(a, b) return __mll_bit.bxor(__force(a), __force(b)) end
