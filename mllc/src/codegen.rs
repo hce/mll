@@ -935,14 +935,14 @@ impl CodeGen {
         }
     }
 
-    /// Like is_cheap but also treats function applications with cheap
-    /// sub-expressions as cheap. Safe for function arguments where the
-    /// callee will force the value immediately — avoids thunk allocation
-    /// for calls like fi(ch, fiVol) that compute simple values.
+    /// Like is_cheap but also treats constructor applications with cheap
+    /// sub-expressions as cheap (they just allocate, no computation).
+    /// General function applications are NOT cheap — they can be
+    /// arbitrarily expensive and must be thunked for non-strict semantics.
     fn is_cheap_arg(expr: &TExpr) -> bool {
         if Self::is_cheap(expr) { return true; }
         match &expr.kind {
-            TExprKind::App(func, arg) => {
+            TExprKind::App(func, arg) if Self::is_con_app(expr) => {
                 Self::is_cheap_arg(func) && Self::is_cheap_arg(arg)
             }
             TExprKind::Paren(inner) => Self::is_cheap_arg(inner),
