@@ -2,6 +2,7 @@
 
 pub mod ast;
 pub mod codegen;
+pub mod demand;
 pub mod desugar;
 pub mod lexer;
 pub mod modules;

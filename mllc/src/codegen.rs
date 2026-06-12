@@ -1,3 +1,4 @@
+use crate::demand::DemandInfo;
 use crate::tir::*;
 use crate::types::Ty;
 
@@ -22,6 +23,8 @@ struct CodeGen {
     /// Used to distinguish known-safe function calls from potentially expensive
     /// calls to unknown function parameters in non-strict contexts.
     top_level_names: std::collections::HashSet<String>,
+    /// Demand analysis: per-function parameter strictness.
+    demand_info: DemandInfo,
     output: String,
     indent: usize,
 }
@@ -35,6 +38,7 @@ impl CodeGen {
             params_always_cheap: std::collections::HashMap::new(),
             inline_fns: std::collections::HashMap::new(),
             top_level_names: std::collections::HashSet::new(),
+            demand_info: DemandInfo { strict_params: std::collections::HashMap::new() },
             output: String::new(), indent: 0,
         }
     }
@@ -361,24 +365,27 @@ impl CodeGen {
 
             let all_simple = clause.patterns.iter().all(|p| matches!(p, TPattern::Var(_, _) | TPattern::Wildcard));
             if all_simple {
-                // Mark params concrete based on call-site analysis:
-                // if all callers pass cheap args, skip __force entirely.
-                // Otherwise, force if the param is used in the body (strictness).
+                // Mark params concrete based on call-site and demand analysis:
+                // - If all callers pass cheap args, skip __force entirely.
+                // - If demand analysis says param is strict, force at entry.
+                // - Otherwise, stay lazy (param might never be used).
                 let call_site_cheap = self.params_always_cheap.get(&func.name).cloned();
+                let demand_strict = self.demand_info.strict_params.get(&func.name).cloned();
                 for (i, pat) in clause.patterns.iter().enumerate() {
                     if let TPattern::Var(v, _) = pat {
                         let sname = sanitize_name(v);
                         let always_cheap = call_site_cheap.as_ref().map_or(false, |v| v.get(i).copied().unwrap_or(false));
+                        let is_strict = demand_strict.as_ref().map_or(false, |v| v.get(i).copied().unwrap_or(false));
                         if always_cheap {
                             // All callers pass concrete values — no __force needed
                             self.emit_line(&format!("local {} = _arg{}", sname, i));
                             self.concrete_vars.insert(sname);
-                        } else if expr_references_name(&clause.body, v) {
-                            // Used in body, might be a thunk — force at entry
+                        } else if is_strict {
+                            // Demand analysis: body forces this param — force at entry
                             self.emit_line(&format!("local {} = __force(_arg{})", sname, i));
                             self.concrete_vars.insert(sname);
                         } else {
-                            // Unused — stay lazy
+                            // Not demanded — stay lazy
                             self.emit_line(&format!("local {} = _arg{}", sname, i));
                         }
                     }
@@ -1318,10 +1325,18 @@ impl CodeGen {
                     if needs_wrap { self.emit("("); }
                     self.gen_expr_raw(f);
                     if needs_wrap { self.emit(")"); }
+                    // Look up callee's demand info for strict positions.
+                    let callee_strict = if let TExprKind::Var(name) = &f.kind {
+                        self.demand_info.strict_params.get(name).cloned()
+                    } else {
+                        None
+                    };
                     self.emit("(");
                     for (i, a) in args.iter().enumerate() {
                         if i > 0 { self.emit(", "); }
-                        if Self::is_cheap_arg(a) {
+                        let is_strict = callee_strict.as_ref()
+                            .map_or(false, |v| v.get(i).copied().unwrap_or(false));
+                        if Self::is_cheap_arg(a) || is_strict {
                             self.gen_expr(a);
                         } else {
                             self.emit("__thunk(function() return ");
@@ -1813,6 +1828,7 @@ fn is_builtin_op(op: &str) -> bool {
 
 pub fn generate(module: &TModule) -> String {
     let mut cg = CodeGen::new();
+    cg.demand_info = crate::demand::analyze(module);
     cg.output.push_str(PRELUDE);
     cg.output.push('\n');
     cg.generate_module(module);
