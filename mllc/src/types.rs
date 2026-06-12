@@ -1,6 +1,13 @@
 use std::collections::HashMap;
 use std::fmt;
 
+/// A typeclass constraint on a type variable, e.g. Show a
+#[derive(Debug, Clone)]
+pub struct TyConstraint {
+    pub class_name: String,
+    pub type_var: String,
+}
+
 /// Kind of a type expression.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Kind {
@@ -116,10 +123,22 @@ impl Ty {
         match self {
             Ty::Con(_) | Ty::Unit => self.clone(),
             Ty::Var(v) => {
-                if let Some(ty) = subst.lookup(v) {
-                    ty.apply_subst(subst)
-                } else {
-                    self.clone()
+                // Follow substitution chain iteratively to avoid stack overflow
+                // from cyclic or long transitive mappings (e.g., a→b, b→c, c→Int)
+                let mut current = v;
+                let mut depth = 0;
+                loop {
+                    if let Some(ty) = subst.lookup(current) {
+                        if let Ty::Var(next) = ty {
+                            depth += 1;
+                            if depth > 100 { return ty.clone(); }
+                            current = next;
+                        } else {
+                            return ty.apply_subst(subst);
+                        }
+                    } else {
+                        return Ty::Var(current.clone());
+                    }
                 }
             }
             Ty::Arrow(a, b) => Ty::arrow(a.apply_subst(subst), b.apply_subst(subst)),
@@ -275,6 +294,10 @@ impl Subst {
 
     pub fn remove(&mut self, v: &TyVar) {
         self.map.remove(v);
+    }
+
+    pub fn size(&self) -> usize {
+        self.map.len()
     }
 
     /// Compose two substitutions: apply self first, then other
