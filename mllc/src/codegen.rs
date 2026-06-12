@@ -85,7 +85,7 @@ impl CodeGen {
             "__force", "__thunk", "__mll_cons", "__mll_lazy_cons", "__mll_head",
             "__mll_tail", "__mll_to_lua", "__mll_wrap_callback", "__mll_run",
             "not_", "engage", "liftIO", "show", "error_", "max", "min",
-            "pure", "return_", "Just",
+            "pure", "return_", "Just", "undefined",
             "show_Integer", "show_Number", "show_String", "show_Bool",
             "show_List_", "show_Maybe", "show_ByteString", "show_HashMap",
             "eq_Integer", "eq_Number", "eq_String", "eq_Bool", "eq_ByteString",
@@ -1854,6 +1854,7 @@ local function pure(x) return x end
 local function return_(x) return x end
 local function Just(x) return x end
 local Nothing = nil
+local undefined = __thunk(function() error("bottom: evaluated undefined") end)
 local function show_Integer(x) return show(x) end
 local function show_Number(x) return show(x) end
 local function show_String(x) return show(x) end

@@ -377,6 +377,7 @@ impl Checker {
             (".", vec![a.clone(), b.clone(), c.clone()], Ty::fun(&[Ty::arrow(tb.clone(), tc.clone()), Ty::arrow(ta.clone(), tb.clone()), ta.clone()], tc.clone())),
             ("not", vec![], Ty::arrow(Ty::Con("Bool".into()), Ty::Con("Bool".into()))),
             ("error", vec![a.clone()], Ty::arrow(Ty::Con("String".into()), ta.clone())),
+            ("undefined", vec![a.clone()], ta.clone()),
             ("otherwise", vec![], Ty::Con("Bool".into())),
             ("seq", vec![a.clone(), b.clone()], Ty::fun(&[ta.clone(), tb.clone()], tb.clone())),
             // Monadic operators are polymorphic over the monad (IO, LuaIO s, etc.)
