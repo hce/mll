@@ -18,6 +18,8 @@ impl TypeEnv {
         self.bindings.insert(name, scheme);
     }
 
+    pub fn size(&self) -> usize { self.bindings.len() }
+
     pub fn lookup(&self, name: &str) -> Option<&Scheme> {
         self.bindings.get(name)
     }
@@ -97,6 +99,8 @@ pub struct Checker {
     local_types: HashSet<String>,
     /// Whether orphan instance checking is active
     orphan_check_enabled: bool,
+    /// Typeclass constraints per function name (for dictionary-passing fallback)
+    fn_constraints: HashMap<String, Vec<TyConstraint>>,
 }
 
 impl Checker {
@@ -115,6 +119,7 @@ impl Checker {
             local_classes: HashSet::new(),
             local_types: HashSet::new(),
             orphan_check_enabled: false,
+            fn_constraints: HashMap::new(),
         };
         checker.init_prelude();
         checker.init_kinds();
@@ -957,6 +962,19 @@ impl Checker {
                 if let Some(info) = extract_ffi_info(ty) {
                     ffi_info.insert(name.clone(), info);
                 }
+                // Extract typeclass constraints before ast_type_to_ty discards them
+                if let Type::Constrained { constraints, .. } = ty {
+                    let ty_constraints: Vec<TyConstraint> = constraints.iter().map(|c| {
+                        let type_var = match &c.type_arg {
+                            Type::Var(v) => v.clone(),
+                            _ => format!("{:?}", c.type_arg),
+                        };
+                        TyConstraint { class_name: c.class_name.clone(), type_var }
+                    }).collect();
+                    if !ty_constraints.is_empty() {
+                        self.fn_constraints.insert(name.clone(), ty_constraints);
+                    }
+                }
                 sigs.insert(name.clone(), self.ast_type_to_ty(ty));
             }
         }
@@ -1208,6 +1226,16 @@ impl Checker {
     /// Expose instances for the monomorphizer
     pub fn get_instances(&self) -> &HashMap<(String, String), InstanceInfo> {
         &self.instances
+    }
+
+    /// Expose typeclass constraints per function for dictionary-passing fallback
+    pub fn get_fn_constraints(&self) -> &HashMap<String, Vec<TyConstraint>> {
+        &self.fn_constraints
+    }
+
+    /// Expose class definitions for the monomorphizer
+    pub fn get_classes(&self) -> &HashMap<String, ClassInfo> {
+        &self.classes
     }
 
     // --- Deriving ---
