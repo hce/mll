@@ -5,19 +5,30 @@
 use std::path::Path;
 
 fn run_mll_file(path: &Path) {
-    let source = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("Cannot read {}: {}", path.display(), e));
+    let path = path.to_path_buf();
+    // Run on a thread with a larger stack to handle deeply nested expressions
+    let result = std::thread::Builder::new()
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            let source = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("Cannot read {}: {}", path.display(), e));
 
-    let source_dir = path.parent().unwrap_or(Path::new("."));
-    let lua_code = match mllc::compile(&source, source_dir, &[]) {
-        Ok(r) => r.lua_code,
-        Err(e) => panic!("{}: compilation failed:\n{}", path.display(), e),
-    };
+            let source_dir = path.parent().unwrap_or(Path::new("."));
+            let lua_code = match mllc::compile(&source, source_dir, &[]) {
+                Ok(r) => r.lua_code,
+                Err(e) => panic!("{}: compilation failed:\n{}", path.display(), e),
+            };
 
-    let lua = mlua::Lua::new();
-    match lua.load(&lua_code).set_name(path.to_str().unwrap()).exec() {
-        Ok(()) => {}
-        Err(e) => panic!("{}: runtime error:\n{}", path.display(), e),
+            let lua = mlua::Lua::new();
+            match lua.load(&lua_code).set_name(path.to_str().unwrap()).exec() {
+                Ok(()) => {}
+                Err(e) => panic!("{}: runtime error:\n{}", path.display(), e),
+            }
+        })
+        .unwrap()
+        .join();
+    if let Err(e) = result {
+        std::panic::resume_unwind(e);
     }
 }
 
@@ -58,6 +69,7 @@ mll_test!(mutual_recursion, "mutual_recursion.mll");
 mll_test!(higher_order, "higher_order.mll");
 mll_test!(fizzbuzz, "fizzbuzz.mll");
 mll_test!(purehashmap, "purehashmap.mll");
+mll_test!(poly_recursion, "poly_recursion.mll");
 
 // Compile-error tests: these SHOULD fail to compile
 #[test]
@@ -128,6 +140,9 @@ fn examples_compile() {
         "jsontest",           // deep typechecker recursion on imported JSON module
         "aestest",            // 256-element S-box lists need large stack (runs via mll compiler)
         "bstest",             // needs large stack (runs via mll compiler)
+        "rectype",            // legitimate type errors (Ord on tuples, String as [Char])
+        "match",              // experimental scratch file
+        "experiments",        // experimental scratch file
     ];
 
     let mut failures = Vec::new();
