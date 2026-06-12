@@ -18,6 +18,10 @@ struct CodeGen {
     /// Small pure functions eligible for inlining at call sites.
     /// Maps function name to (param_names, body).
     inline_fns: std::collections::HashMap<String, (Vec<String>, TExpr)>,
+    /// Names that are top-level or prelude definitions (not local params/binds).
+    /// Used to distinguish known-safe function calls from potentially expensive
+    /// calls to unknown function parameters in non-strict contexts.
+    top_level_names: std::collections::HashSet<String>,
     output: String,
     indent: usize,
 }
@@ -30,6 +34,7 @@ impl CodeGen {
             concrete_vars: std::collections::HashSet::new(),
             params_always_cheap: std::collections::HashMap::new(),
             inline_fns: std::collections::HashMap::new(),
+            top_level_names: std::collections::HashSet::new(),
             output: String::new(), indent: 0,
         }
     }
@@ -85,7 +90,7 @@ impl CodeGen {
             "__force", "__thunk", "__mll_cons", "__mll_lazy_cons", "__mll_head",
             "__mll_tail", "__mll_to_lua", "__mll_wrap_callback", "__mll_run",
             "not_", "engage", "liftIO", "show", "error_", "max", "min",
-            "pure", "return_", "Just", "undefined",
+            "pure", "return_", "Just",
             "show_Integer", "show_Number", "show_String", "show_Bool",
             "show_List_", "show_Maybe", "show_ByteString", "show_HashMap",
             "eq_Integer", "eq_Number", "eq_String", "eq_Bool", "eq_ByteString",
@@ -108,6 +113,27 @@ impl CodeGen {
             "__mll_ma_to_list",
         ] {
             self.concrete_vars.insert(name.to_string());
+            self.top_level_names.insert(name.to_string());
+        }
+
+        // Also register builtin names that go through sanitize_name mapping
+        // (ByteString, MutArray, HashMap ops, etc.) so has_unknown_call
+        // recognizes them as known top-level functions.
+        for name in &[
+            "bsEmpty", "bsLength", "bsIndex", "bsSub", "bsSingleton",
+            "bsConcat", "bsNull", "bsHead", "bsTail", "bsCons", "bsSnoc",
+            "bsReplicate", "bsPack", "bsUnpack", "bsMap", "bsFoldl",
+            "bsXor", "bsZipWith", "bsToString", "bsFromString",
+            "bsGetU16LE", "bsGetU32LE", "bsGetI8", "bsGetI16LE",
+            "bsPutI16LE", "bsConcatList",
+            "runST", "newSTArray", "readSTArray", "writeSTArray",
+            "modifySTArray", "stArrayLength", "newSTArrayFromList",
+            "stArrayToList",
+            "hmEmpty", "hmInsert", "hmLookup", "hmDelete", "hmSize",
+            "hmKeys", "hmValues", "hmMember", "hmFromList",
+            "return", "pure", "not", "print", "error", "show",
+        ] {
+            self.top_level_names.insert(sanitize_name(name));
         }
 
         for def in &module.data_defs {
@@ -161,6 +187,7 @@ impl CodeGen {
                 // Forward-declared names will all be assigned functions —
                 // mark concrete so references in any function body skip __force
                 self.concrete_vars.insert(name.clone());
+                self.top_level_names.insert(name.clone());
             }
         }
 
@@ -935,17 +962,42 @@ impl CodeGen {
         }
     }
 
-    /// Like is_cheap but also treats constructor applications with cheap
-    /// sub-expressions as cheap (they just allocate, no computation).
-    /// General function applications are NOT cheap — they can be
-    /// arbitrarily expensive and must be thunked for non-strict semantics.
+    /// Like is_cheap but also treats function applications with cheap
+    /// sub-expressions as cheap. Safe for function arguments where the
+    /// callee will force the value immediately — avoids thunk allocation
+    /// for calls like fi(ch, fiVol) that compute simple values.
     fn is_cheap_arg(expr: &TExpr) -> bool {
         if Self::is_cheap(expr) { return true; }
         match &expr.kind {
-            TExprKind::App(func, arg) if Self::is_con_app(expr) => {
+            TExprKind::App(func, arg) => {
                 Self::is_cheap_arg(func) && Self::is_cheap_arg(arg)
             }
             TExprKind::Paren(inner) => Self::is_cheap_arg(inner),
+            _ => false,
+        }
+    }
+
+    /// Check if an expression contains a function call where the function
+    /// is NOT a known top-level/prelude name. Such calls could be to
+    /// arbitrary function parameters and may be expensive.
+    fn has_unknown_call(&self, expr: &TExpr) -> bool {
+        match &expr.kind {
+            TExprKind::App(func, arg) => {
+                // Find the outermost function in this application chain
+                let mut f = func.as_ref();
+                while let TExprKind::App(inner_f, _) = &f.kind {
+                    f = inner_f.as_ref();
+                }
+                // If the function is a variable not in top_level_names, it's unknown
+                if let TExprKind::Var(name) = &f.kind {
+                    if !Self::is_con_app(expr) && !self.top_level_names.contains(&sanitize_name(name)) {
+                        return true;
+                    }
+                }
+                // Recurse into sub-expressions
+                self.has_unknown_call(func) || self.has_unknown_call(arg)
+            }
+            TExprKind::Paren(inner) => self.has_unknown_call(inner),
             _ => false,
         }
     }
@@ -1159,6 +1211,26 @@ impl CodeGen {
                             self.emit(" end)()");
                             return;
                         }
+                    }
+                }
+
+                // return/pure are identity — emit the argument directly.
+                // Thunk arguments that contain calls to unknown functions
+                // (parameters, locally-bound variables) to preserve non-strict
+                // semantics: `return (f x)` must not eagerly evaluate `f x`
+                // when f could be an arbitrary expensive function.
+                // Calls to known top-level/prelude functions are safe to
+                // evaluate eagerly.
+                if let TExprKind::Var(name) = &func.kind {
+                    if name == "return" || name == "pure" {
+                        if self.has_unknown_call(arg) {
+                            self.emit("__thunk(function() return ");
+                            self.gen_expr(arg);
+                            self.emit(" end)");
+                        } else {
+                            self.gen_expr(arg);
+                        }
+                        return;
                     }
                 }
 
@@ -1854,7 +1926,6 @@ local function pure(x) return x end
 local function return_(x) return x end
 local function Just(x) return x end
 local Nothing = nil
-local undefined = __thunk(function() error("bottom: evaluated undefined") end)
 local function show_Integer(x) return show(x) end
 local function show_Number(x) return show(x) end
 local function show_String(x) return show(x) end
