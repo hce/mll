@@ -316,10 +316,13 @@ impl CodeGen {
 
         if clauses.len() == 1 && clauses[0].guards.is_empty() {
             let clause = &clauses[0];
+            let dict_param_names: Vec<String> = func.dict_params.iter().map(|(_, p)| p.clone()).collect();
             let mut params: Vec<String> = (0..clause.patterns.len()).map(|i| format!("_arg{}", i)).collect();
             let eta_params: Vec<String> = (0..eta_count).map(|i| format!("_eta{}", i)).collect();
             params.extend(eta_params.iter().cloned());
-            let params_str = params.join(", ");
+            let mut all_params = dict_param_names.clone();
+            all_params.extend(params.iter().cloned());
+            let params_str = all_params.join(", ");
             self.emit_indent();
             self.emit(&self.fn_decl(&lua_name, &params_str));
             self.emit("\n");
@@ -327,6 +330,7 @@ impl CodeGen {
             // The function name is concrete (it's a function value) — allow
             // self-recursive calls to skip __force
             self.concrete_vars.insert(lua_name.clone());
+            for dp in &dict_param_names { self.concrete_vars.insert(dp.clone()); }
 
             let all_simple = clause.patterns.iter().all(|p| matches!(p, TPattern::Var(_, _) | TPattern::Wildcard));
             if all_simple {
@@ -385,16 +389,20 @@ impl CodeGen {
         }
 
         // Multiple clauses or guards
+        let dict_param_names: Vec<String> = func.dict_params.iter().map(|(_, p)| p.clone()).collect();
         let num_params = clauses.iter().map(|c| c.patterns.len()).max().unwrap_or(0);
         let mut params: Vec<String> = (0..num_params).map(|i| format!("_arg{}", i)).collect();
         let eta_params_multi: Vec<String> = (0..eta_count).map(|i| format!("_eta{}", i)).collect();
         params.extend(eta_params_multi.iter().cloned());
-        let params_str = params.join(", ");
+        let mut all_params = dict_param_names.clone();
+        all_params.extend(params.iter().cloned());
+        let params_str = all_params.join(", ");
         self.emit_indent();
         self.emit(&self.fn_decl(&lua_name, &params_str));
         self.emit("\n");
         self.indent += 1;
         self.concrete_vars.insert(lua_name.clone());
+        for dp in &dict_param_names { self.concrete_vars.insert(dp.clone()); }
         // Force params that are destructured OR where call-site analysis
         // shows all callers pass cheap args (so the value is already concrete).
         let call_site_cheap = self.params_always_cheap.get(&func.name).cloned();
@@ -1376,7 +1384,23 @@ impl CodeGen {
                 self.emit(&format!("function(_a, _b) return __force(_a) {} __force(_b) end", lua_op));
             }
             TExprKind::SpecCall { specialized, args, .. } => {
-                if let Some(rest) = specialized.strip_prefix("__mll_tuple_eq:") {
+                if let Some(rest) = specialized.strip_prefix("__mll_dict:") {
+                    // Dictionary table literal: { method1 = impl1, method2 = impl2 }
+                    let parts: Vec<&str> = rest.splitn(2, ':').collect();
+                    let methods = if parts.len() > 1 { parts[1] } else { "" };
+                    self.emit("{ ");
+                    let mut first = true;
+                    for entry in methods.split(',') {
+                        if entry.is_empty() { continue; }
+                        let kv: Vec<&str> = entry.splitn(2, '=').collect();
+                        if kv.len() == 2 {
+                            if !first { self.emit(", "); }
+                            first = false;
+                            self.emit(&format!("{} = {}", sanitize_name(kv[0]), sanitize_name(kv[1])));
+                        }
+                    }
+                    self.emit(" }");
+                } else if let Some(rest) = specialized.strip_prefix("__mll_tuple_eq:") {
                     // Tuple eq: compare element-wise
                     // Format: __mll_tuple_eq:N:eq_E1,eq_E2,...
                     let parts: Vec<&str> = rest.splitn(2, ':').collect();
@@ -1500,6 +1524,25 @@ impl CodeGen {
                     self.gen_expr(e);
                 }
                 self.emit("}");
+            }
+            TExprKind::DictAccess { dict_param, method_name } => {
+                self.emit(&format!("{}.{}", dict_param, sanitize_name(method_name)));
+            }
+            TExprKind::DictCall { func_name, dict_args, value_args } => {
+                self.emit(&sanitize_name(func_name));
+                self.emit("(");
+                let mut first = true;
+                for d in dict_args {
+                    if !first { self.emit(", "); }
+                    first = false;
+                    self.gen_expr(d);
+                }
+                for v in value_args {
+                    if !first { self.emit(", "); }
+                    first = false;
+                    self.gen_expr(v);
+                }
+                self.emit(")");
             }
         }
     }
@@ -1673,6 +1716,11 @@ fn expr_references_name(expr: &TExpr, name: &str) -> bool {
         }
         TExprKind::SpecCall { args, .. } => args.iter().any(|a| expr_references_name(a, name)),
         TExprKind::Tuple(elems) => elems.iter().any(|e| expr_references_name(e, name)),
+        TExprKind::DictAccess { .. } => false,
+        TExprKind::DictCall { dict_args, value_args, .. } => {
+            dict_args.iter().any(|a| expr_references_name(a, name)) ||
+            value_args.iter().any(|a| expr_references_name(a, name))
+        }
     }
 }
 

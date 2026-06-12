@@ -46,6 +46,9 @@ pub struct TFunction {
     pub clauses: Vec<TClause>,
     /// If true, this is a monomorphized specialization
     pub specialized: bool,
+    /// Dictionary parameters for polymorphic-recursive functions
+    /// Each entry is (class_name, param_name), e.g. ("Show", "__dict_Show")
+    pub dict_params: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone)]
@@ -130,7 +133,12 @@ impl TExpr {
             TExprKind::Tuple(elems) => TExprKind::Tuple(
                 elems.into_iter().map(|e| e.apply_subst(subst)).collect(),
             ),
-            other => other, // Var, Con, Lit, OpFunc — no nested types
+            TExprKind::DictCall { func_name, dict_args, value_args } => TExprKind::DictCall {
+                func_name,
+                dict_args: dict_args.into_iter().map(|a| a.apply_subst(subst)).collect(),
+                value_args: value_args.into_iter().map(|a| a.apply_subst(subst)).collect(),
+            },
+            other => other, // Var, Con, Lit, OpFunc, DictAccess — no nested types
         };
         TExpr { kind, ty }
     }
@@ -207,6 +215,17 @@ pub enum TExprKind {
         args: Vec<TExpr>,
     },
     Tuple(Vec<TExpr>),
+    /// Access a method from a typeclass dictionary parameter.
+    DictAccess {
+        dict_param: String,
+        method_name: String,
+    },
+    /// Call a dictionary-passing function with explicit dictionaries.
+    DictCall {
+        func_name: String,
+        dict_args: Vec<TExpr>,
+        value_args: Vec<TExpr>,
+    },
 }
 
 #[derive(Debug, Clone)]

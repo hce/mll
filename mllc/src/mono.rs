@@ -6,8 +6,8 @@
 
 use std::collections::{HashMap, HashSet};
 use crate::tir::*;
-use crate::typechecker::Checker;
-use crate::types::Ty;
+use crate::typechecker::{Checker, ClassInfo};
+use crate::types::{Ty, TyVar, TyConstraint, Subst};
 
 /// A specialization demand: function name + concrete type arguments
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -33,6 +33,14 @@ pub struct Monomorphizer {
     instance_methods: HashMap<(String, String), String>,
     /// Errors collected during monomorphization
     pub errors: Vec<String>,
+    /// Functions that use dictionary-passing instead of monomorphization
+    dict_passing_fns: HashSet<String>,
+    /// Typeclass constraints per function (from type signatures)
+    fn_constraints: HashMap<String, Vec<TyConstraint>>,
+    /// Class definitions (class_name -> ClassInfo)
+    classes: HashMap<String, ClassInfo>,
+    /// Method name -> class name (reverse lookup)
+    method_to_class: HashMap<String, String>,
 }
 
 impl Monomorphizer {
@@ -81,6 +89,14 @@ impl Monomorphizer {
         // But also remove "show" from builtins since it's commonly a class method
         builtins.remove("show");
 
+        // Build method -> class reverse lookup
+        let mut method_to_class = HashMap::new();
+        for (class_name, info) in checker.get_classes() {
+            for (method_name, _) in &info.methods {
+                method_to_class.insert(method_name.clone(), class_name.clone());
+            }
+        }
+
         Monomorphizer {
             poly_fns: HashMap::new(),
             builtins,
@@ -90,6 +106,10 @@ impl Monomorphizer {
             class_methods,
             instance_methods,
             errors: Vec::new(),
+            dict_passing_fns: HashSet::new(),
+            fn_constraints: checker.get_fn_constraints().clone(),
+            classes: checker.get_classes().clone(),
+            method_to_class,
         }
     }
 
@@ -102,7 +122,7 @@ impl Monomorphizer {
         }
 
         // Monomorphize instance methods too
-        let instance_fns: Vec<TFunction> = module.instance_fns.iter()
+        let mut instance_fns: Vec<TFunction> = module.instance_fns.iter()
             .map(|f| self.mono_function(f.clone()))
             .collect();
 
@@ -116,6 +136,35 @@ impl Monomorphizer {
         // aren't resolved). Append generated specializations after.
         let mut result_fns: Vec<TFunction> = functions;
         result_fns.extend(self.generated.drain(..));
+
+        // Rewrite dict-passing functions and their call sites
+        if !self.dict_passing_fns.is_empty() {
+            let dict_fns: Vec<String> = self.dict_passing_fns.iter().cloned().collect();
+            for name in &dict_fns {
+                if let Some(pos) = result_fns.iter().position(|f| f.name == *name) {
+                    let mut func = result_fns[pos].clone();
+                    self.rewrite_dict_passing_fn(&mut func);
+                    result_fns[pos] = func;
+                }
+            }
+            // Rewrite call sites in non-dict functions
+            for func in &mut result_fns {
+                if self.dict_passing_fns.contains(&func.name) { continue; }
+                for clause in &mut func.clauses {
+                    clause.body = self.rewrite_dict_call_sites(clause.body.clone());
+                    clause.where_binds = clause.where_binds.iter().map(|wb| TLocalDef {
+                        name: wb.name.clone(),
+                        patterns: wb.patterns.clone(),
+                        body: self.rewrite_dict_call_sites(wb.body.clone()),
+                    }).collect();
+                }
+            }
+            for func in &mut instance_fns {
+                for clause in &mut func.clauses {
+                    clause.body = self.rewrite_dict_call_sites(clause.body.clone());
+                }
+            }
+        }
 
         TModule {
             data_defs: module.data_defs,
@@ -252,7 +301,7 @@ impl Monomorphizer {
                 // polymorphic but we have specialization(s) for this function
                 // name, use the most recent one (the recursive/sibling call
                 // shares the same concrete type as the enclosing specialization)
-                if self.poly_fns.contains_key(name) && self.is_polymorphic(&ty) {
+                if self.poly_fns.contains_key(name) && !self.dict_passing_fns.contains(name) && self.is_polymorphic(&ty) {
                     let specs: Vec<_> = self.specializations.iter()
                         .filter(|(k, _)| k.name == *name)
                         .map(|(_, v)| v.clone())
@@ -261,7 +310,7 @@ impl Monomorphizer {
                         return TExpr { kind: TExprKind::Var(specs.last().unwrap().clone()), ty };
                     }
                 }
-                if self.poly_fns.contains_key(name) && !self.is_polymorphic(&ty) {
+                if self.poly_fns.contains_key(name) && !self.dict_passing_fns.contains(name) && !self.is_polymorphic(&ty) {
                     let key = SpecKey { name: name.clone(), ty: format!("{}", ty) };
                     let mangled = if let Some(existing) = self.specializations.get(&key) {
                         existing.clone()
@@ -271,12 +320,10 @@ impl Monomorphizer {
                             .filter(|k| k.name == *name)
                             .count();
                         if spec_count > 16 {
-                            self.errors.push(format!(
-                                "Polymorphic recursion detected in '{}': \
-                                 too many type specializations (the function likely calls \
-                                 itself at a different type in each recursive step)",
-                                name
-                            ));
+                            // Switch to dictionary-passing for this function
+                            self.dict_passing_fns.insert(name.clone());
+                            self.specializations.retain(|k, _| k.name != *name);
+                            self.generated.retain(|f| !f.name.starts_with(&format!("{}_", name)));
                             return TExpr { kind: expr.kind, ty };
                         }
                         let mangled = self.mangle_name(name, &ty);
@@ -284,7 +331,12 @@ impl Monomorphizer {
                         if let Some(poly_fn) = self.poly_fns.get(name).cloned() {
                             let mut spec_fn = poly_fn.clone();
                             spec_fn.name = mangled.clone();
+                            // Apply type substitution to body for correct method resolution
+                            let subst = Self::compute_body_subst(&poly_fn, &ty);
                             spec_fn.ty = ty.clone();
+                            spec_fn.clauses = spec_fn.clauses.into_iter()
+                                .map(|c| c.apply_subst(&subst))
+                                .collect();
                             spec_fn.specialized = true;
                             spec_fn = self.mono_function(spec_fn);
                             self.generated.push(spec_fn);
@@ -494,6 +546,7 @@ impl Monomorphizer {
                 where_binds: vec![],
             }],
             specialized: true,
+            dict_params: vec![],
         };
         self.generated.push(func);
         mangled
@@ -532,6 +585,7 @@ impl Monomorphizer {
                         where_binds: vec![],
                     }],
                     specialized: true,
+            dict_params: vec![],
                 };
                 self.generated.push(func);
                 Some(mangled)
@@ -644,8 +698,416 @@ impl Monomorphizer {
                 where_binds: vec![],
             }],
             specialized: true,
+            dict_params: vec![],
         };
         self.generated.push(func);
         mangled
+    }
+
+    // --- Dictionary-passing support for polymorphic recursion ---
+
+    /// Compute a substitution mapping ALL free type vars in a function body
+    /// to concrete types, using the function type signature as source of truth.
+    fn compute_body_subst(poly_fn: &TFunction, concrete_ty: &Ty) -> Subst {
+        // Step 1: match function type against concrete type for name-based mappings
+        let mut name_map: HashMap<String, Ty> = HashMap::new();
+        Self::collect_subst_by_name(&poly_fn.ty, concrete_ty, &mut name_map);
+
+        // Step 2: collect ALL free type vars from body
+        let mut all_vars: Vec<TyVar> = Vec::new();
+        for clause in &poly_fn.clauses {
+            Self::collect_clause_vars(clause, &mut all_vars);
+        }
+
+        // Step 3: map each body var to concrete type
+        let mut map: HashMap<TyVar, Ty> = HashMap::new();
+        Self::collect_subst_exact(&poly_fn.ty, concrete_ty, &mut map);
+        for var in &all_vars {
+            if map.contains_key(var) { continue; }
+            if let Some(concrete) = name_map.get(&var.name) {
+                map.insert(var.clone(), concrete.clone());
+                continue;
+            }
+            // Single type parameter: all unmapped vars get the same concrete type
+            if name_map.len() == 1 {
+                map.insert(var.clone(), name_map.values().next().unwrap().clone());
+            }
+        }
+        Subst::from_map(map)
+    }
+
+    fn collect_subst_by_name(pattern: &Ty, concrete: &Ty, map: &mut HashMap<String, Ty>) {
+        match (pattern, concrete) {
+            (Ty::Var(v), _) => { map.insert(v.name.clone(), concrete.clone()); }
+            (Ty::Arrow(pa, pb), Ty::Arrow(ca, cb)) |
+            (Ty::App(pa, pb), Ty::App(ca, cb)) => {
+                Self::collect_subst_by_name(pa, ca, map);
+                Self::collect_subst_by_name(pb, cb, map);
+            }
+            (Ty::List(pa), Ty::List(ca)) |
+            (Ty::IO(pa), Ty::IO(ca)) => Self::collect_subst_by_name(pa, ca, map),
+            (Ty::Tuple(ps), Ty::Tuple(cs)) if ps.len() == cs.len() => {
+                for (p, c) in ps.iter().zip(cs.iter()) {
+                    Self::collect_subst_by_name(p, c, map);
+                }
+            }
+            (Ty::Forall(_, pi), _) => Self::collect_subst_by_name(pi, concrete, map),
+            _ => {}
+        }
+    }
+
+    fn collect_subst_exact(pattern: &Ty, concrete: &Ty, map: &mut HashMap<TyVar, Ty>) {
+        match (pattern, concrete) {
+            (Ty::Var(v), _) => { map.insert(v.clone(), concrete.clone()); }
+            (Ty::Arrow(pa, pb), Ty::Arrow(ca, cb)) |
+            (Ty::App(pa, pb), Ty::App(ca, cb)) => {
+                Self::collect_subst_exact(pa, ca, map);
+                Self::collect_subst_exact(pb, cb, map);
+            }
+            (Ty::List(pa), Ty::List(ca)) |
+            (Ty::IO(pa), Ty::IO(ca)) => Self::collect_subst_exact(pa, ca, map),
+            (Ty::Tuple(ps), Ty::Tuple(cs)) if ps.len() == cs.len() => {
+                for (p, c) in ps.iter().zip(cs.iter()) {
+                    Self::collect_subst_exact(p, c, map);
+                }
+            }
+            (Ty::Forall(_, pi), _) => Self::collect_subst_exact(pi, concrete, map),
+            _ => {}
+        }
+    }
+
+    fn collect_clause_vars(clause: &TClause, vars: &mut Vec<TyVar>) {
+        for p in &clause.patterns { Self::collect_pattern_vars(p, vars); }
+        Self::collect_expr_vars(&clause.body, vars);
+        for g in &clause.guards {
+            Self::collect_expr_vars(&g.condition, vars);
+            Self::collect_expr_vars(&g.body, vars);
+        }
+        for wb in &clause.where_binds { Self::collect_expr_vars(&wb.body, vars); }
+    }
+
+    fn collect_pattern_vars(pat: &TPattern, vars: &mut Vec<TyVar>) {
+        match pat {
+            TPattern::Var(_, ty) => {
+                for v in ty.free_vars() { if !vars.contains(&v) { vars.push(v); } }
+            }
+            TPattern::Constructor { args, .. } => {
+                for a in args { Self::collect_pattern_vars(a, vars); }
+            }
+            TPattern::Paren(p) => Self::collect_pattern_vars(p, vars),
+            TPattern::Tuple(ps) => { for p in ps { Self::collect_pattern_vars(p, vars); } }
+            _ => {}
+        }
+    }
+
+    fn collect_expr_vars(expr: &TExpr, vars: &mut Vec<TyVar>) {
+        for v in expr.ty.free_vars() { if !vars.contains(&v) { vars.push(v); } }
+        match &expr.kind {
+            TExprKind::App(f, a) => { Self::collect_expr_vars(f, vars); Self::collect_expr_vars(a, vars); }
+            TExprKind::InfixApp { lhs, rhs, .. } => { Self::collect_expr_vars(lhs, vars); Self::collect_expr_vars(rhs, vars); }
+            TExprKind::Lambda { body, .. } => Self::collect_expr_vars(body, vars),
+            TExprKind::If { cond, then_branch, else_branch } => {
+                Self::collect_expr_vars(cond, vars);
+                Self::collect_expr_vars(then_branch, vars);
+                Self::collect_expr_vars(else_branch, vars);
+            }
+            TExprKind::Case { scrutinee, branches } => {
+                Self::collect_expr_vars(scrutinee, vars);
+                for b in branches { Self::collect_expr_vars(&b.body, vars); }
+            }
+            TExprKind::Let { binds, body } => {
+                for b in binds { Self::collect_expr_vars(&b.body, vars); }
+                Self::collect_expr_vars(body, vars);
+            }
+            TExprKind::Negate(e) | TExprKind::Paren(e) => Self::collect_expr_vars(e, vars),
+            TExprKind::Tuple(es) => { for e in es { Self::collect_expr_vars(e, vars); } }
+            _ => {}
+        }
+    }
+
+    /// Rewrite a function to use dictionary-passing.
+    fn rewrite_dict_passing_fn(&self, func: &mut TFunction) {
+        let constraints = match self.fn_constraints.get(&func.name) {
+            Some(cs) => cs.clone(),
+            None => return,
+        };
+        let dict_params: Vec<(String, String)> = constraints.iter().map(|c| {
+            (c.class_name.clone(), format!("__dict_{}", c.class_name))
+        }).collect();
+        func.dict_params = dict_params.clone();
+
+        let class_to_dict: HashMap<String, String> = dict_params.iter()
+            .map(|(cls, param)| (cls.clone(), param.clone()))
+            .collect();
+
+        let func_name = func.name.clone();
+        for clause in &mut func.clauses {
+            clause.body = self.rewrite_dict_expr(clause.body.clone(), &func_name, &class_to_dict);
+            clause.guards = clause.guards.iter().map(|g| TGuard {
+                condition: self.rewrite_dict_expr(g.condition.clone(), &func_name, &class_to_dict),
+                body: self.rewrite_dict_expr(g.body.clone(), &func_name, &class_to_dict),
+            }).collect();
+            clause.where_binds = clause.where_binds.iter().map(|wb| TLocalDef {
+                name: wb.name.clone(),
+                patterns: wb.patterns.clone(),
+                body: self.rewrite_dict_expr(wb.body.clone(), &func_name, &class_to_dict),
+            }).collect();
+        }
+    }
+
+    /// Rewrite an expression for dictionary-passing.
+    fn rewrite_dict_expr(&self, expr: TExpr, func_name: &str, class_to_dict: &HashMap<String, String>) -> TExpr {
+        let ty = expr.ty.clone();
+        let kind = match expr.kind {
+            TExprKind::Var(ref name) => {
+                if let Some(class_name) = self.method_to_class.get(name) {
+                    if let Some(dict_param) = class_to_dict.get(class_name) {
+                        if self.is_polymorphic(&ty) {
+                            return TExpr {
+                                kind: TExprKind::DictAccess {
+                                    dict_param: dict_param.clone(),
+                                    method_name: name.clone(),
+                                },
+                                ty,
+                            };
+                        }
+                    }
+                }
+                return expr;
+            }
+            TExprKind::App(_, _) => {
+                let (head, _) = Self::collect_app_chain(&expr);
+                if let TExprKind::Var(ref call_name) = head.kind {
+                    if call_name == func_name {
+                        let (_, args) = Self::collect_app_chain(&expr);
+                        let dict_args: Vec<TExpr> = class_to_dict.values().map(|dp| {
+                            TExpr::new(TExprKind::Var(dp.clone()), Ty::Unit)
+                        }).collect();
+                        let value_args: Vec<TExpr> = args.into_iter()
+                            .map(|a| self.rewrite_dict_expr(a, func_name, class_to_dict))
+                            .collect();
+                        return TExpr {
+                            kind: TExprKind::DictCall {
+                                func_name: func_name.to_string(),
+                                dict_args,
+                                value_args,
+                            },
+                            ty,
+                        };
+                    }
+                }
+                if let TExprKind::App(func, arg) = expr.kind {
+                    TExprKind::App(
+                        Box::new(self.rewrite_dict_expr(*func, func_name, class_to_dict)),
+                        Box::new(self.rewrite_dict_expr(*arg, func_name, class_to_dict)),
+                    )
+                } else { unreachable!() }
+            }
+            TExprKind::InfixApp { op, lhs, rhs } => {
+                if let Some(class_name) = self.method_to_class.get(&op) {
+                    if let Some(dict_param) = class_to_dict.get(class_name) {
+                        if self.is_polymorphic(&lhs.ty) {
+                            let dict_access = TExpr::new(
+                                TExprKind::DictAccess { dict_param: dict_param.clone(), method_name: op.clone() },
+                                Ty::Unit,
+                            );
+                            let lhs = self.rewrite_dict_expr(*lhs, func_name, class_to_dict);
+                            let rhs = self.rewrite_dict_expr(*rhs, func_name, class_to_dict);
+                            let app1 = TExpr::new(TExprKind::App(Box::new(dict_access), Box::new(lhs)), Ty::Unit);
+                            return TExpr::new(TExprKind::App(Box::new(app1), Box::new(rhs)), ty);
+                        }
+                    }
+                }
+                TExprKind::InfixApp {
+                    op,
+                    lhs: Box::new(self.rewrite_dict_expr(*lhs, func_name, class_to_dict)),
+                    rhs: Box::new(self.rewrite_dict_expr(*rhs, func_name, class_to_dict)),
+                }
+            }
+            TExprKind::Lambda { params, body } => TExprKind::Lambda {
+                params, body: Box::new(self.rewrite_dict_expr(*body, func_name, class_to_dict)),
+            },
+            TExprKind::If { cond, then_branch, else_branch } => TExprKind::If {
+                cond: Box::new(self.rewrite_dict_expr(*cond, func_name, class_to_dict)),
+                then_branch: Box::new(self.rewrite_dict_expr(*then_branch, func_name, class_to_dict)),
+                else_branch: Box::new(self.rewrite_dict_expr(*else_branch, func_name, class_to_dict)),
+            },
+            TExprKind::Case { scrutinee, branches } => TExprKind::Case {
+                scrutinee: Box::new(self.rewrite_dict_expr(*scrutinee, func_name, class_to_dict)),
+                branches: branches.into_iter().map(|b| TCaseBranch {
+                    pattern: b.pattern,
+                    guards: b.guards.into_iter().map(|g| TGuard {
+                        condition: self.rewrite_dict_expr(g.condition, func_name, class_to_dict),
+                        body: self.rewrite_dict_expr(g.body, func_name, class_to_dict),
+                    }).collect(),
+                    body: self.rewrite_dict_expr(b.body, func_name, class_to_dict),
+                }).collect(),
+            },
+            TExprKind::Let { binds, body } => TExprKind::Let {
+                binds: binds.into_iter().map(|b| TLocalDef {
+                    name: b.name, patterns: b.patterns,
+                    body: self.rewrite_dict_expr(b.body, func_name, class_to_dict),
+                }).collect(),
+                body: Box::new(self.rewrite_dict_expr(*body, func_name, class_to_dict)),
+            },
+            TExprKind::Negate(e) => TExprKind::Negate(Box::new(self.rewrite_dict_expr(*e, func_name, class_to_dict))),
+            TExprKind::Paren(e) => TExprKind::Paren(Box::new(self.rewrite_dict_expr(*e, func_name, class_to_dict))),
+            TExprKind::Tuple(es) => TExprKind::Tuple(es.into_iter().map(|e| self.rewrite_dict_expr(e, func_name, class_to_dict)).collect()),
+            other => other,
+        };
+        TExpr { kind, ty }
+    }
+
+    /// Decompose nested App into (head_function, [arg1, arg2, ...])
+    fn collect_app_chain(expr: &TExpr) -> (&TExpr, Vec<TExpr>) {
+        let mut args = Vec::new();
+        let mut e = expr;
+        while let TExprKind::App(f, a) = &e.kind {
+            args.push(a.as_ref().clone());
+            e = f.as_ref();
+        }
+        args.reverse();
+        (e, args)
+    }
+
+    /// Rewrite call sites to dict-passing functions.
+    fn rewrite_dict_call_sites(&self, expr: TExpr) -> TExpr {
+        let ty = expr.ty.clone();
+        match expr.kind {
+            TExprKind::App(_, _) => {
+                let (head, _) = Self::collect_app_chain(&expr);
+                if let TExprKind::Var(ref call_name) = head.kind {
+                    if self.dict_passing_fns.contains(call_name) && !self.is_polymorphic(&ty) {
+                        if let Some(constraints) = self.fn_constraints.get(call_name).cloned() {
+                            let (head, args) = Self::collect_app_chain(&expr);
+                            let poly_fn_ty = self.poly_fns.get(call_name).map(|f| &f.ty);
+                            let dict_args: Vec<TExpr> = constraints.iter().map(|c| {
+                                let concrete = self.resolve_constraint_type(
+                                    &c.type_var, poly_fn_ty, &args);
+                                self.build_concrete_dict(&c.class_name, &concrete)
+                            }).collect();
+                            let value_args: Vec<TExpr> = args.into_iter()
+                                .map(|a| self.rewrite_dict_call_sites(a))
+                                .collect();
+                            return TExpr {
+                                kind: TExprKind::DictCall {
+                                    func_name: call_name.clone(),
+                                    dict_args,
+                                    value_args,
+                                },
+                                ty,
+                            };
+                        }
+                    }
+                }
+                if let TExprKind::App(func, arg) = expr.kind {
+                    TExpr {
+                        kind: TExprKind::App(
+                            Box::new(self.rewrite_dict_call_sites(*func)),
+                            Box::new(self.rewrite_dict_call_sites(*arg)),
+                        ),
+                        ty,
+                    }
+                } else { unreachable!() }
+            }
+            TExprKind::InfixApp { op, lhs, rhs } => TExpr {
+                kind: TExprKind::InfixApp {
+                    op,
+                    lhs: Box::new(self.rewrite_dict_call_sites(*lhs)),
+                    rhs: Box::new(self.rewrite_dict_call_sites(*rhs)),
+                }, ty,
+            },
+            TExprKind::Lambda { params, body } => TExpr {
+                kind: TExprKind::Lambda { params, body: Box::new(self.rewrite_dict_call_sites(*body)) }, ty,
+            },
+            TExprKind::If { cond, then_branch, else_branch } => TExpr {
+                kind: TExprKind::If {
+                    cond: Box::new(self.rewrite_dict_call_sites(*cond)),
+                    then_branch: Box::new(self.rewrite_dict_call_sites(*then_branch)),
+                    else_branch: Box::new(self.rewrite_dict_call_sites(*else_branch)),
+                }, ty,
+            },
+            TExprKind::Case { scrutinee, branches } => TExpr {
+                kind: TExprKind::Case {
+                    scrutinee: Box::new(self.rewrite_dict_call_sites(*scrutinee)),
+                    branches: branches.into_iter().map(|b| TCaseBranch {
+                        pattern: b.pattern, guards: b.guards,
+                        body: self.rewrite_dict_call_sites(b.body),
+                    }).collect(),
+                }, ty,
+            },
+            TExprKind::Let { binds, body } => TExpr {
+                kind: TExprKind::Let {
+                    binds: binds.into_iter().map(|b| TLocalDef {
+                        name: b.name, patterns: b.patterns,
+                        body: self.rewrite_dict_call_sites(b.body),
+                    }).collect(),
+                    body: Box::new(self.rewrite_dict_call_sites(*body)),
+                }, ty,
+            },
+            TExprKind::Negate(e) => TExpr {
+                kind: TExprKind::Negate(Box::new(self.rewrite_dict_call_sites(*e))), ty,
+            },
+            TExprKind::Paren(e) => TExpr {
+                kind: TExprKind::Paren(Box::new(self.rewrite_dict_call_sites(*e))), ty,
+            },
+            _ => expr,
+        }
+    }
+
+    fn resolve_constraint_type(&self, type_var: &str, poly_fn_ty: Option<&Ty>, args: &[TExpr]) -> Ty {
+        if let Some(fn_ty) = poly_fn_ty {
+            let mut subst = HashMap::new();
+            Self::match_fn_args(fn_ty, args, &mut subst);
+            if let Some(ty) = subst.get(type_var) { return ty.clone(); }
+        }
+        if !args.is_empty() {
+            if let Some(inner) = Self::extract_inner_type(&args[0].ty) { return inner; }
+        }
+        Ty::Con("_".into())
+    }
+
+    fn match_fn_args(fn_ty: &Ty, args: &[TExpr], subst: &mut HashMap<String, Ty>) {
+        let mut param_ty = fn_ty;
+        for arg in args {
+            if let Ty::Arrow(from, to) = param_ty {
+                Self::collect_subst_by_name(from, &arg.ty, subst);
+                param_ty = to;
+            }
+        }
+    }
+
+    fn extract_inner_type(ty: &Ty) -> Option<Ty> {
+        match ty {
+            Ty::App(_, inner) => Some(*inner.clone()),
+            Ty::List(inner) => Some(*inner.clone()),
+            _ => None,
+        }
+    }
+
+    fn build_concrete_dict(&self, class_name: &str, concrete_ty: &Ty) -> TExpr {
+        let class_info = match self.classes.get(class_name) {
+            Some(ci) => ci,
+            None => return TExpr::new(TExprKind::Lit(TLiteral::Unit), Ty::Unit),
+        };
+        let ty_str = format!("{}", concrete_ty);
+        let mut method_impls = Vec::new();
+        for (method_name, _) in &class_info.methods {
+            let key = (method_name.clone(), ty_str.clone());
+            let impl_name = self.instance_methods.get(&key)
+                .cloned()
+                .or_else(|| self.resolve_parameterized_instance(method_name, concrete_ty))
+                .unwrap_or_else(|| method_name.clone());
+            method_impls.push(format!("{}={}", method_name, impl_name));
+        }
+        let spec = format!("__mll_dict:{}:{}", class_name, method_impls.join(","));
+        TExpr::new(
+            TExprKind::SpecCall {
+                original: format!("__dict_{}", class_name),
+                specialized: spec,
+                args: vec![],
+            },
+            Ty::Unit,
+        )
     }
 }
