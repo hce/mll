@@ -2146,7 +2146,7 @@ local __mll_bs; do
         end,
         function(a, b)                                                           -- [16] xor
             a=F(a); b=F(b); local t = {}
-            for i = 1, #a do t[i] = sc(sb(a, i) ~ sb(b, i)) end
+            for i = 1, #a do t[i] = sc(__mll_bxor(sb(a, i), sb(b, i))) end
             return table.concat(t)
         end,
         function(f, a, b)                                                        -- [17] zipwith
