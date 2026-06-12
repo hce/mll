@@ -70,6 +70,7 @@ mll_test!(higher_order, "higher_order.mll");
 mll_test!(fizzbuzz, "fizzbuzz.mll");
 mll_test!(purehashmap, "purehashmap.mll");
 mll_test!(poly_recursion, "poly_recursion.mll");
+mll_test!(non_strict, "non_strict.mll");
 
 // Compile-error tests: these SHOULD fail to compile
 #[test]
