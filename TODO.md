@@ -49,6 +49,8 @@ MATA-LL TODO
 - [x] Export keyword for Lua interop (export foo :: ...)
 - [x] Polymorphic recursion via dictionary-passing fallback
 - [x] Type substitution in monomorphized specializations
+- [x] undefined (bottom) value — thunk that errors when forced
+- [x] WASM build target (mllc-wasm crate, browser playground)
 
 ## Typeclasses and dispatch
 
@@ -73,11 +75,17 @@ MATA-LL TODO
 - [x] Typeclass methods inlined as Lua operators
 - [x] Whole-program call-site analysis for parameter concreteness
 - [x] Eliminating __mll_run: compile-time type info instead of runtime introspection
+- [x] Demand analysis for parameter strictness (per-function, branch-aware)
+- [x] return/pure optimization: thunk only when argument contains unknown function calls
+- [x] CI wasm build job with artifact upload
 
 ## Open
 
+- [ ] Cross-function demand propagation (if callee is strict in position j, propagate to caller)
+- [ ] Full strictness analysis replacing is_cheap_arg heuristic
 - [ ] Zero-arg LuaIterator (stdinLines) needs IO wrapping to avoid eager eval
 - [ ] Monadic operators (>>=, >>, return, pure) use hardcoded unification for IO/LuaIO instead of proper Monad typeclass dispatch — revisit once typeclass infrastructure is more mature
+- [ ] GitHub Pages deployment for playground (currently wasm artifact only)
 
 ## Parser
 
