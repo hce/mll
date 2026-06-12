@@ -235,11 +235,11 @@ impl CodeGen {
                 self.emit(&format!("{name} = function(...)\n"));
                 self.indent += 1;
                 self.emit_indent();
-                self.emit(&format!("local args = table.pack(...)\n"));
+                self.emit(&format!("local args = {{n = select('#', ...), ...}}\n"));
                 self.emit_indent();
                 self.emit("for i = 1, args.n do if type(args[i]) == \"function\" then args[i] = __mll_wrap_callback(args[i]) end end\n");
                 self.emit_indent();
-                self.emit(&format!("return __mll_to_lua({sname}(table.unpack(args, 1, args.n)))\n"));
+                self.emit(&format!("return __mll_to_lua({sname}(unpack(args, 1, args.n)))\n"));
                 self.indent -= 1;
                 self.emit_indent();
                 self.emit("end,\n");
@@ -927,9 +927,17 @@ impl CodeGen {
                 }
             }
             TExprKind::InfixApp { op, lhs, rhs } => {
+                if op == "div" {
+                    self.emit("math.floor(");
+                    self.gen_expr_subst(lhs, subst);
+                    self.emit(" / ");
+                    self.gen_expr_subst(rhs, subst);
+                    self.emit(")");
+                    return;
+                }
                 let lua_op = match op.as_str() {
                     "++" => "..", "&&" => "and", "||" => "or", "/=" => "~=",
-                    "div" => "//", "mod" => "%",
+                    "mod" => "%",
                     other => other,
                 };
                 self.emit("(");
@@ -1348,9 +1356,17 @@ impl CodeGen {
                 }
             }
             TExprKind::InfixApp { op, lhs, rhs } => {
+                if op == "div" {
+                    self.emit("math.floor(");
+                    self.gen_expr(lhs);
+                    self.emit(" / ");
+                    self.gen_expr(rhs);
+                    self.emit(")");
+                    return;
+                }
                 let lua_op = match op.as_str() {
                     "++" => "..", "&&" => "and", "||" => "or", "/=" => "~=",
-                    "div" => "//", "mod" => "%",
+                    "mod" => "%",
                     ":" => {
                         self.emit("__mll_cons(");
                         self.gen_expr(lhs); self.emit(", "); self.gen_expr(rhs);
@@ -1892,9 +1908,9 @@ end
 -- Used at the FFI boundary: Lua functions don't understand MLL thunks.
 local function __mll_wrap_callback(f)
     return function(...)
-        local args = table.pack(...)
+        local args = {n = select('#', ...), ...}
         for i = 1, args.n do args[i] = __mll_to_lua(args[i]) end
-        return f(table.unpack(args, 1, args.n))
+        return f(unpack(args, 1, args.n))
     end
 end
 
@@ -2057,13 +2073,24 @@ local function exit_(code)
     if code == 1 then os.exit(0) else os.exit(code[2]) end
 end
 
--- Bitwise operations (Lua 5.4 native operators wrapped as functions)
-local function __mll_bxor(a, b) return __force(a) ~ __force(b) end
-local function __mll_band(a, b) return __force(a) & __force(b) end
-local function __mll_bor(a, b) return __force(a) | __force(b) end
-local function __mll_bnot(a) return ~__force(a) end
-local function __mll_shl(a, b) return __force(a) << __force(b) end
-local function __mll_shr(a, b) return __force(a) >> __force(b) end
+-- Bitwise operations (Lua 5.3+ native, LuaJIT bit.*, or bit32)
+local __mll_bxor, __mll_band, __mll_bor, __mll_bnot, __mll_shl, __mll_shr
+if (load or loadstring)('return 0 ~ 0') then
+    __mll_bxor = (load or loadstring)('local F=... return function(a,b) return F(a) ~ F(b) end')(__force)
+    __mll_band = (load or loadstring)('local F=... return function(a,b) return F(a) & F(b) end')(__force)
+    __mll_bor  = (load or loadstring)('local F=... return function(a,b) return F(a) | F(b) end')(__force)
+    __mll_bnot = (load or loadstring)('local F=... return function(a) return ~F(a) end')(__force)
+    __mll_shl  = (load or loadstring)('local F=... return function(a,b) return F(a) << F(b) end')(__force)
+    __mll_shr  = (load or loadstring)('local F=... return function(a,b) return F(a) >> F(b) end')(__force)
+else
+    local __mll_bit = (type(jit) == 'table' and require('bit')) or bit32 or require('bit')
+    function __mll_bxor(a, b) return __mll_bit.bxor(__force(a), __force(b)) end
+    function __mll_band(a, b) return __mll_bit.band(__force(a), __force(b)) end
+    function __mll_bor(a, b) return __mll_bit.bor(__force(a), __force(b)) end
+    function __mll_bnot(a) return __mll_bit.bnot(__force(a)) end
+    function __mll_shl(a, b) return __mll_bit.lshift(__force(a), __force(b)) end
+    function __mll_shr(a, b) return __mll_bit.rshift(__force(a), __force(b)) end
+end
 
 -- Array primitives (O(1) indexed access, built from MLL lists)
 local function __mll_array_from_list(xs)
@@ -2142,7 +2169,7 @@ local __mll_bs; do
             s=F(s); i=F(i)+1; local v=sb(s,i)+sb(s,i+1)*256; if v>=32768 then return v-65536 else return v end
         end,
         function(v)                                                              -- [24] putI16LE (signed int to 2-byte BS)
-            v=F(v); if v<0 then v=v+65536 end; return sc(v%256, v//256%256)
+            v=F(v); if v<0 then v=v+65536 end; return sc(v%256, math.floor(v/256)%256)
         end,
         function(xs)                                                             -- [25] concatList
             xs = F(xs); local t = {}; local cur = xs
