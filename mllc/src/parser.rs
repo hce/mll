@@ -208,7 +208,10 @@ impl Parser {
     fn parse_constructor(&mut self) -> Result<Constructor, String> {
         let name = self.expect_upper_ident()?;
 
-        // Check for record syntax
+        // Check for record syntax (may be on next line)
+        let save_pos = self.pos;
+        let save_indent = self.current_indent;
+        self.skip_newlines_and_indent();
         if self.at(&Token::LeftBrace) {
             self.advance();
             let mut fields = Vec::new();
@@ -235,6 +238,10 @@ impl Parser {
                 fields: ConstructorFields::Named(fields),
                 gadt_type: None,
             });
+        } else {
+            // Not record syntax — backtrack
+            self.pos = save_pos;
+            self.current_indent = save_indent;
         }
 
         // Positional fields
