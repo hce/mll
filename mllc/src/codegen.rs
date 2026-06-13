@@ -215,8 +215,9 @@ impl CodeGen {
 
         if module.has_main {
             self.emit_line("");
-            self.emit_line("-- Entry point");
-            self.emit_line("__run()");
+            self.emit_line("-- Entry point (skip when loaded via require)");
+            self.emit_line("local __mll_modname = ...");
+            self.emit_line("if __mll_modname == nil then __run() end");
         }
 
         // Generate module return table for exports
