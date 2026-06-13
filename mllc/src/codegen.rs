@@ -2093,13 +2093,16 @@ if (loadstring or load)('return 0 ~ 0') then
     __mll_shl  = (loadstring or load)('local F=... return function(a,b) return F(a) << F(b) end')(__force)
     __mll_shr  = (loadstring or load)('local F=... return function(a,b) return F(a) >> F(b) end')(__force)
 else
-    local __mll_bit = (type(jit) == 'table' and require('bit')) or bit32 or require('bit')
+    local __ok, __mll_bit = pcall(function() return (type(jit) == 'table' and require('bit')) or bit32 or require('bit') end)
+    if not __ok then __mll_bit = nil end
+    if __mll_bit then
     function __mll_bxor(a, b) return __mll_bit.bxor(__force(a), __force(b)) end
     function __mll_band(a, b) return __mll_bit.band(__force(a), __force(b)) end
     function __mll_bor(a, b) return __mll_bit.bor(__force(a), __force(b)) end
     function __mll_bnot(a) return __mll_bit.bnot(__force(a)) end
     function __mll_shl(a, b) return __mll_bit.lshift(__force(a), __force(b)) end
     function __mll_shr(a, b) return __mll_bit.rshift(__force(a), __force(b)) end
+    end
 end
 
 -- Array primitives (O(1) indexed access, built from MLL lists)
