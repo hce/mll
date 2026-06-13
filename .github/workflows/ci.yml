@@ -49,8 +49,29 @@ jobs:
       - name: Test LuaJIT
         run: ./mll-tests/lua-compat.sh luajit
 
+  perf:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build compiler
+        run: cargo build --release
+
+      - name: Install LuaJIT
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y luajit
+
+      - name: Performance test (LuaJIT)
+        run: ./mll-tests/perf-test.sh luajit
+
   merge:
-    needs: [test, lua-compat]
+    needs: [test, lua-compat, perf]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
