@@ -401,13 +401,11 @@ impl CodeGen {
                     self.emit(")(");
                     self.emit(&eta_params.join(", "));
                     self.emit(")\n");
-                } else if Self::is_nullary_action_type(&func.ty) || Self::returns_action(&func.ty) {
-                    // IO/ST-returning function: body produces an action closure.
-                    // Use gen_bind_chain_io to flatten bind chains inside
-                    // the action, performing sub-actions and returning the final result.
-                    self.emit_indent(); self.emit("return ");
-                    self.gen_expr(&clause.body);
-                    self.emit("\n");
+                } else if Self::returns_action(&func.ty) {
+                    // IO/ST-returning function: flatten bind chains, performing
+                    // sub-actions directly. The function itself acts as the action
+                    // closure — callers use gen_action to invoke it.
+                    self.gen_bind_chain_io(&clause.body);
                 } else {
                     // Pure function: use gen_bind_chain for the body so
                     // If/>>=/>> flatten into statements instead of IIFEs
@@ -1041,25 +1039,69 @@ impl CodeGen {
     /// Emit an ST/IO action in a flattened bind chain.
     /// Bare Var references to zero-arg IO/ST bindings are deferred functions
     /// in Lua and need () to execute. Everything else self-evaluates.
+    /// Emit code that PERFORMS an IO/ST action (used inside bind chains).
+    /// Inlines known action patterns to avoid closure allocation:
+    /// - SpecCall __mll_io: → emit Lua call directly
+    /// - SpecCall for ST primitives → emit operation directly
+    /// - pure/return → emit the value
+    /// Falls back to __force(expr)() for unknown actions.
     fn gen_action(&mut self, expr: &TExpr) {
-        // IO/ST actions are function() closures — call to perform them.
-        // Use __force first (action may be a thunk), then () to perform.
-        // Literals and unit values are not actions.
-        if Self::is_nullary_action_type(&expr.ty) {
-            match &expr.kind {
-                TExprKind::Lit(_) | TExprKind::Con(_) | TExprKind::Tuple(_) => {
-                    // Not an action — emit as-is (e.g., return () or a literal)
-                    self.gen_expr(expr);
-                }
-                _ => {
+        if !Self::is_nullary_action_type(&expr.ty) {
+            self.gen_expr(expr);
+            return;
+        }
+        match &expr.kind {
+            TExprKind::Lit(_) | TExprKind::Con(_) | TExprKind::Tuple(_) => {
+                self.gen_expr(expr);
+            }
+            // pure(x) / return(x): performing it just returns x
+            TExprKind::App(func, arg) if matches!(&func.kind, TExprKind::Var(n) if n == "pure" || n == "return") => {
+                self.gen_expr(arg);
+            }
+            // IO SpecCall: inline the Lua call directly (skip closure)
+            TExprKind::SpecCall { specialized, args, .. } if specialized.starts_with("__mll_io:") => {
+                let lua_func = &specialized["__mll_io:".len()..];
+                if lua_func.starts_with(':') {
+                    let method = &lua_func[1..];
                     self.emit("__force(");
-                    self.gen_expr(expr);
-                    self.emit(")()");
+                    self.gen_expr(&args[0]);
+                    self.emit(&format!("):{}", method));
+                    self.emit("(");
+                    for (i, a) in args.iter().enumerate().skip(1) {
+                        if i > 1 { self.emit(", "); }
+                        self.emit("__force(");
+                        self.gen_expr(a);
+                        self.emit(")");
+                    }
+                    self.emit(")");
+                } else {
+                    self.emit(lua_func);
+                    self.emit("(");
+                    for (i, a) in args.iter().enumerate() {
+                        if i > 0 { self.emit(", "); }
+                        self.emit("__force(");
+                        self.gen_expr(a);
+                        self.emit(")");
+                    }
+                    self.emit(")");
                 }
             }
-        } else {
-            self.gen_expr(expr);
+            _ => {
+                // General IO/ST action: use __mll_run which handles both
+                // direct values and action closures (function or value).
+                self.emit("__mll_run(");
+                self.gen_expr(expr);
+                self.emit(")");
+            }
         }
+    }
+
+    fn is_st_primitive(name: &str) -> bool {
+        matches!(name,
+            "newSTArray" | "readSTArray" | "writeSTArray"
+            | "modifySTArray" | "stArrayLength" | "newSTArrayFromList"
+            | "stArrayToList"
+        )
     }
 
     fn is_nullary_action_type(ty: &Ty) -> bool {
@@ -2298,33 +2340,27 @@ local function eq_ByteString(a, b) return __force(a) == __force(b) end
 -- MutArray runtime (mutable integer arrays, backed by Lua tables)
 -- Operations are effectful and run inside LuaIO s.
 -- 0-based indexing externally, 1-based internally.
+-- ST array primitives: these run inside runST which provides scoping,
+-- so they perform directly (no action closure wrapping needed).
 local function __mll_ma_new(size, init)
-    return function()
-        size = __force(size); init = __force(init)
-        local t = {}; for i = 1, size do t[i] = init end; return t
-    end
+    size = __force(size); init = __force(init)
+    local t = {}; for i = 1, size do t[i] = init end; return t
 end
-local function __mll_ma_read(arr, idx) return function() return __force(arr)[__force(idx) + 1] end end
-local function __mll_ma_write(arr, idx, val) return function() __force(arr)[__force(idx) + 1] = __force(val) end end
+local function __mll_ma_read(arr, idx) return __force(arr)[__force(idx) + 1] end
+local function __mll_ma_write(arr, idx, val) __force(arr)[__force(idx) + 1] = __force(val) end
 local function __mll_ma_modify(arr, idx, f)
-    return function()
-        arr = __force(arr); idx = __force(idx) + 1; f = __force(f)
-        arr[idx] = __force(f)(arr[idx])
-    end
+    arr = __force(arr); idx = __force(idx) + 1; f = __force(f)
+    arr[idx] = __force(f)(arr[idx])
 end
-local function __mll_ma_length(arr) return function() return #__force(arr) end end
+local function __mll_ma_length(arr) return #__force(arr) end
 local function __mll_ma_from_list(xs)
-    return function()
-        xs = __force(xs); local t = {}; local cur = xs
-        while cur ~= nil do t[#t+1] = __force(__mll_head(cur)); cur = __mll_tail(cur) end
-        return t
-    end
+    xs = __force(xs); local t = {}; local cur = xs
+    while cur ~= nil do t[#t+1] = __force(__mll_head(cur)); cur = __mll_tail(cur) end
+    return t
 end
 local function __mll_ma_to_list(arr)
-    return function()
-        arr = __force(arr); local r = nil
-        for i = #arr, 1, -1 do r = __mll_cons(arr[i], r) end
-        return r
-    end
+    arr = __force(arr); local r = nil
+    for i = #arr, 1, -1 do r = __mll_cons(arr[i], r) end
+    return r
 end
 "#;
