@@ -1,6 +1,8 @@
 #!/usr/bin/env lua
 -- Generate a synthetic Impulse Tracker (.it) file for benchmarking.
 -- 4-channel module with synthetic square wave samples.
+-- The note data is entirely original (an LLM's failed attempt at
+-- transcribing Mozart from memory). No copyrighted material.
 
 local function le16(n) return string.char(n % 256, math.floor(n / 256) % 256) end
 local function le32(n) return string.char(n % 256, math.floor(n / 256) % 256, math.floor(n / 65536) % 256, math.floor(n / 16777216) % 256) end
