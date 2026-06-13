@@ -92,6 +92,15 @@ MATA-LL TODO
 - [x] Multi-binding `let` in `do` blocks
 - [x] Guards in combination with `where` clauses
 
+## Haskell compatibility gaps
+
+- [ ] Eq for [a] and Maybe a (parameterized typeclass instances)
+- [ ] deriving Ord
+- [ ] List comprehensions
+- [ ] Backtick sections (`(`div` 2)` as a function)
+- [ ] Local function definitions in do-let (`let f x = ...`)
+- [ ] Inline case syntax (`case x of { A -> ...; B -> ... }`)
+
 ## Can defer
 
 - [ ] Lambda pattern matching
