@@ -62,13 +62,13 @@ jobs:
       - name: Build compiler
         run: cargo build --release
 
-      - name: Install LuaJIT
+      - name: Install Lua
         run: |
           sudo apt-get update
-          sudo apt-get install -y luajit
+          sudo apt-get install -y lua5.4
 
-      - name: Performance test (LuaJIT)
-        run: ./mll-tests/perf-test.sh luajit
+      - name: Performance test (Lua 5.4)
+        run: ./mll-tests/perf-test.sh lua5.4
 
   merge:
     needs: [test, lua-compat, perf]
