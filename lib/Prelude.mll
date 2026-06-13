@@ -54,9 +54,9 @@ reverse xs = go [] xs
 -- List operations
 concatMap :: (a -> [b]) -> [a] -> [b]
 concatMap _ [] = []
-concatMap f (x:xs) = go (f x)
-    where go [] = concatMap f xs
-          go (y:ys) = y : go ys
+concatMap f (x:xs) = prepend (f x) (concatMap f xs)
+    where prepend [] rest = rest
+          prepend (y:ys) rest = y : prepend ys rest
 
 
 
