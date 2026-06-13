@@ -1,147 +1,175 @@
 #!/usr/bin/env lua
--- Generate a minimal Impulse Tracker (.it) file for benchmarking.
--- Uses the opening theme of Mozart's Symphony No. 40 in G minor (K.550).
--- Composition is public domain; samples are synthetic square waves.
+-- Generate an Impulse Tracker (.it) file for benchmarking.
+-- Mozart's Symphony No. 40 in G minor (K.550), first movement opening.
+-- Composition is public domain; samples are synthetic waveforms.
 
 local function le16(n) return string.char(n % 256, math.floor(n / 256) % 256) end
 local function le32(n) return string.char(n % 256, math.floor(n / 256) % 256, math.floor(n / 65536) % 256, math.floor(n / 16777216) % 256) end
 
--- Generate a square wave sample at a given length
-local function make_square_sample(length)
+-- Generate waveform samples (signed 8-bit stored as unsigned)
+local function make_sample(length, wavefn)
     local data = {}
-    local half = math.floor(length / 8)
     for i = 1, length do
-        local phase = (i % (half * 2)) < half
-        data[i] = string.char(phase and 40 or 216)  -- +40 / -40 as unsigned
+        local t = (i - 1) / length
+        local v = math.floor(wavefn(t) * 50 + 128)  -- center at 128, amplitude 50
+        if v < 0 then v = 0 elseif v > 255 then v = 255 end
+        data[i] = string.char(v)
     end
     return table.concat(data)
 end
 
--- Note name to IT note number (C-5 = 60)
-local notes = {
-    ["C"]  = 0, ["C#"] = 1, ["Db"] = 1, ["D"]  = 2, ["D#"] = 3, ["Eb"] = 3,
-    ["E"]  = 4, ["F"]  = 5, ["F#"] = 6, ["Gb"] = 6, ["G"]  = 7, ["G#"] = 8,
-    ["Ab"] = 8, ["A"]  = 9, ["A#"] = 10, ["Bb"] = 10, ["B"]  = 11,
+-- Different waveforms for different timbres
+local function square(t) return (t % 1) < 0.5 and 1 or -1 end
+local function triangle(t)
+    local p = (t * 2) % 2
+    return p < 1 and (p * 2 - 1) or (3 - p * 2)
+end
+local function saw(t) return (t % 1) * 2 - 1 end
+
+-- Note name to IT note number
+local N = {
+    C=0, ["C#"]=1, Db=1, D=2, ["D#"]=3, Eb=3, E=4, F=5,
+    ["F#"]=6, Gb=6, G=7, ["G#"]=8, Ab=8, A=9, ["A#"]=10, Bb=10, B=11,
 }
-local function note(name, octave) return octave * 12 + notes[name] end
+local function note(name, octave) return octave * 12 + N[name] end
+
+-- Helpers for pattern encoding
 local REST = 255
-local NOTECUT = 254
+local CUT = 254
+local function m(name, oct, vol) return {note(name, oct), 1, vol or 56} end  -- melody (instrument 1)
+local function a(name, oct, vol) return {note(name, oct), 2, vol or 24} end  -- accomp (instrument 2)
+local function v(name, oct, vol) return {note(name, oct), 3, vol or 20} end  -- viola (instrument 3)
+local function b(name, oct, vol) return {note(name, oct), 4, vol or 28} end  -- bass (instrument 4)
+local r = {REST, 0, 255}   -- rest (continue previous)
+local cut = {CUT, 0, 255}  -- note off
 
--- Mozart Symphony No. 40, K.550, opening theme
--- Encoded as {note, instrument, volume} per row per channel
--- 4 channels: Violin I (melody), Violin II (accompaniment), Viola, Cello/Bass
--- Speed 6, Tempo 132 (allegro molto)
+-- Each row = one eighth note
+-- Quarter = 2 rows, Half = 4 rows, Whole = 8 rows
+-- Speed 4, Tempo 160 gives ~5 rows/second → good pacing
 
-local tempo = 132
-local speed = 3  -- ticks per row (faster rows for sixteenth note resolution)
+-- ============================================================
+-- MELODY (Violin I) — the famous theme
+-- ============================================================
+-- The rhythm: short-short-LONG, short-short-LONG, short-short-short-short-LONG
+-- Phrase 1: Eb-D D(half), Eb-D D(half), Eb-D Eb-F# G(half)
+-- Phrase 2: Bb-A A(half), Bb-A A(half), Bb-A Bb-C# D(half)
+-- Then descending: D-Eb-C-D-Bb-C-A-Bb-G-A-F#-G-Eb-F#-G (simplified)
+local melody = {}
+local function mel(t) for _, x in ipairs(t) do melody[#melody+1] = x end end
 
--- Each row = one sixteenth note at this speed
--- Quarter note = 4 rows, eighth = 2 rows, half = 8 rows
+-- Bar 1: accompaniment alone (8 eighth notes of rest)
+mel{r, r, r, r,  r, r, r, r}
 
-local function n(name, oct) return {note(name, oct), 1, 48} end
-local function n2(name, oct) return {note(name, oct), 2, 40} end  -- accompaniment
-local function n3(name, oct) return {note(name, oct), 3, 36} end  -- viola
-local function n4(name, oct) return {note(name, oct), 4, 44} end  -- cello
-local r = {REST, 0, 255}    -- rest (no new note)
-local cut = {NOTECUT, 0, 255}  -- note off
+-- Bars 2-5: First phrase
+-- Pickup + bar 2: ____ ____ Eb D | D ___ ___ Eb D
+mel{r, r, r, r,  r, r, m("Eb",5), m("D",5)}
+mel{m("D",5), r, r, r,  r, r, m("Eb",5), m("D",5)}
+-- Bar 4: D ___ ___ Eb D
+mel{m("D",5), r, r, r,  r, r, m("Eb",5), m("D",5)}
+-- Bar 5: Eb _  D _  Eb F# | G ___ ___ ___
+mel{m("Eb",5), r, m("D",5), r,  m("Eb",5), r, m("F#",5), r}
+mel{m("G",5), r, r, r,  r, r, r, r}
 
--- Violin I: opening melody (bars 1-8 approx)
--- The famous Eb-D-D, Eb-D-D, Eb-D-Eb-F#-G pattern
-local melody = {
-    -- Bar 1: rest (accompaniment starts alone)
-    r, r, r, r,  r, r, r, r,
-    -- Bar 2: Eb5-D5-D5 (eighth-eighth-quarter)
-    n("Eb",5), r, n("D",5), r,  n("D",5), r, r, r,
-    -- Bar 3: Eb5-D5-D5
-    n("Eb",5), r, n("D",5), r,  n("D",5), r, r, r,
-    -- Bar 4: Eb5-D5-Eb5-F#5-G5
-    n("Eb",5), r, n("D",5), r,  n("Eb",5), r, n("F#",5), r,
-    -- Bar 5: G5 (half), rest
-    n("G",5), r, r, r,  r, r, r, r,
-    -- Bar 6: Bb5-A5-A5
-    n("Bb",5), r, n("A",5), r,  n("A",5), r, r, r,
-    -- Bar 7: Bb5-A5-A5
-    n("Bb",5), r, n("A",5), r,  n("A",5), r, r, r,
-    -- Bar 8: Bb5-A5-Bb5-C#6-D6
-    n("Bb",5), r, n("A",5), r,  n("Bb",5), r, n("C#",6), r,
-    -- Bar 9: D6 (half), rest
-    n("D",6), r, r, r,  r, r, r, r,
-    -- Bar 10-11: D6-C6-Bb5-A5-Bb5-A5-G5-F#5
-    n("D",6), r, r, r,  n("C",6), r, r, r,
-    n("Bb",5), r, r, r,  n("A",5), r, r, r,
-    -- Bar 12: G5-F#5-G5-A5
-    n("Bb",5), r, n("A",5), r,  n("G",5), r, n("F#",5), r,
-    -- Bar 13: G5 (whole)
-    n("G",5), r, r, r,  r, r, r, r,
-}
+-- Bars 7-10: Second phrase (transposed up)
+mel{r, r, r, r,  r, r, m("Bb",5), m("A",5)}
+mel{m("A",5), r, r, r,  r, r, m("Bb",5), m("A",5)}
+mel{m("A",5), r, r, r,  r, r, m("Bb",5), m("A",5)}
+mel{m("Bb",5), r, m("A",5), r,  m("Bb",5), r, m("C#",6), r}
+mel{m("D",6), r, r, r,  r, r, r, r}
 
--- Violin II: repeated eighth-note accompaniment figure (Bb4-Bb4-Bb4...)
+-- Bars 12-16: Descending passage
+mel{m("D",6), r, r, r,  m("C",6), r, r, r}
+mel{m("Bb",5), r, r, r,  m("A",5), r, r, r}
+mel{m("G",5), r, m("F#",5), r,  m("G",5), r, m("A",5), r}
+mel{m("Bb",5), r, r, r,  m("A",5), r, r, r}
+mel{m("G",5), r, r, r,  m("F#",5), r, r, r}
+mel{m("G",5), r, r, r,  r, r, r, r}
+
+-- ============================================================
+-- ACCOMPANIMENT (Violin II) — the nervous pulsing eighths
+-- ============================================================
 local accomp = {}
 for i = 1, #melody do
-    if i <= 8 then
-        -- First bar: start the rhythm
-        if (i % 2) == 1 then
-            accomp[i] = n2("Bb",3)
-        else
-            accomp[i] = n2("D",4)
-        end
+    -- Alternating Bb3-D4 eighth notes throughout
+    if (i % 2) == 1 then
+        accomp[i] = a("Bb",3)
     else
-        if (i % 2) == 1 then
-            accomp[i] = n2("Bb",3)
-        else
-            accomp[i] = n2("D",4)
-        end
+        accomp[i] = a("D",4)
     end
 end
 
--- Viola: sustained notes (simplified)
+-- ============================================================
+-- VIOLA — sustained harmonies
+-- ============================================================
 local viola = {}
 for i = 1, #melody do
+    -- Change harmony every 8 rows (1 bar)
+    local bar = math.floor((i - 1) / 8)
     if (i - 1) % 8 == 0 then
-        viola[i] = n3("D",4)
+        if bar < 6 then
+            viola[i] = v("D",4)       -- G minor: D
+        elseif bar < 11 then
+            viola[i] = v("D",4)       -- Still D
+        else
+            viola[i] = v("Eb",4)      -- Passing harmony
+        end
     else
         viola[i] = r
     end
 end
 
--- Cello: bass notes
-local cello = {}
+-- ============================================================
+-- BASS (Cello + Double Bass)
+-- ============================================================
+local bass = {}
 for i = 1, #melody do
+    local bar = math.floor((i - 1) / 8)
     if (i - 1) % 8 == 0 then
-        cello[i] = n4("G",3)
+        if bar < 6 then
+            bass[i] = b("G",2)
+        elseif bar < 11 then
+            bass[i] = b("D",3)
+        else
+            bass[i] = b("G",2)
+        end
     else
-        cello[i] = r
+        bass[i] = r
     end
 end
 
+-- ============================================================
+-- FILE GENERATION
+-- ============================================================
 local num_rows = #melody
 local num_channels = 4
 local num_samples = 4
 local num_patterns = 1
-local num_orders = 8  -- repeat the pattern to make it longer for benchmarking
+local num_orders = 12  -- repeat for longer benchmark
 
--- Build sample data
-local sample_len = 256
-local sample_data = make_square_sample(sample_len)
+-- Samples: different waveforms and lengths for timbral variety
+local samples = {
+    {len = 200, wave = triangle, c5 = 8363},   -- 1: Melody (triangle = softer, string-like)
+    {len = 128, wave = square,   c5 = 8363},   -- 2: Accompaniment (square = crisp)
+    {len = 300, wave = triangle, c5 = 8363},   -- 3: Viola (triangle, longer = warmer)
+    {len = 400, wave = saw,      c5 = 8363},   -- 4: Bass (saw = rich harmonics)
+}
+for i, s in ipairs(samples) do
+    s.data = make_sample(s.len, s.wave)
+end
 
 -- Build pattern data
 local function encode_pattern(rows)
     local data = {}
     for row = 1, rows do
-        local channels = {melody[row], accomp[row], viola[row], cello[row]}
+        local channels = {melody[row], accomp[row], viola[row], bass[row]}
         for ch = 1, num_channels do
             local cell = channels[ch]
             if cell and cell[1] ~= REST then
-                -- channel marker: (ch) + 128 (has mask byte)
-                data[#data+1] = string.char(ch + 128)
-                -- mask: note + instrument + volume = 0x07
-                data[#data+1] = string.char(0x07)
-                -- note
-                data[#data+1] = string.char(cell[1])
-                -- instrument
-                data[#data+1] = string.char(cell[2])
-                -- volume
-                data[#data+1] = string.char(cell[3])
+                data[#data+1] = string.char(ch + 128)  -- channel + has-mask flag
+                data[#data+1] = string.char(0x07)       -- mask: note + instrument + volume
+                data[#data+1] = string.char(cell[1])    -- note
+                data[#data+1] = string.char(cell[2])    -- instrument
+                data[#data+1] = string.char(cell[3])    -- volume
             end
         end
         data[#data+1] = string.char(0)  -- end of row
@@ -155,7 +183,6 @@ local pat_data = encode_pattern(num_rows)
 local header_size = 192
 local order_offset = header_size
 local sample_ptr_offset = order_offset + num_orders
--- No instruments in this file
 local pattern_ptr_offset = sample_ptr_offset + num_samples * 4
 local sample_headers_start = pattern_ptr_offset + num_patterns * 4
 local sample_header_size = 80
@@ -163,95 +190,102 @@ local pattern_start = sample_headers_start + num_samples * sample_header_size
 local pattern_header_size = 8
 local sample_data_start = pattern_start + pattern_header_size + #pat_data
 
+-- Accumulate sample data offsets
+local sample_offsets = {}
+local offset = sample_data_start
+for i, s in ipairs(samples) do
+    sample_offsets[i] = offset
+    offset = offset + s.len
+end
+
 -- Build file
 local out = {}
 
 -- IT Header (192 bytes)
-out[#out+1] = "IMPM"                        -- magic
-local song_name = "Mozart K550"
-out[#out+1] = song_name .. string.rep("\0", 26 - #song_name) -- song name (26 bytes)
+out[#out+1] = "IMPM"
+local song_name = "Mozart K550 - I"
+out[#out+1] = song_name .. string.rep("\0", 26 - #song_name)
 out[#out+1] = le16(0x1004)                  -- pattern row highlight
-out[#out+1] = le16(num_orders)   -- OrdNum
-out[#out+1] = le16(0)            -- InsNum (no instruments)
-out[#out+1] = le16(num_samples)  -- SmpNum
-out[#out+1] = le16(num_patterns) -- PatNum
-out[#out+1] = le16(0x0214)       -- Cwt (compatible with 2.14)
-out[#out+1] = le16(0x0214)       -- Cmwt
-out[#out+1] = le16(0x0009)       -- Flags (stereo + linear slides)
-out[#out+1] = le16(0x0001)       -- Special
-out[#out+1] = string.char(128)   -- GV (global volume)
-out[#out+1] = string.char(48)    -- MV (mix volume)
-out[#out+1] = string.char(speed) -- IS (initial speed)
-out[#out+1] = string.char(tempo) -- IT (initial tempo)
-out[#out+1] = string.char(128)   -- Sep (panning separation)
-out[#out+1] = string.char(0)     -- PWD
-out[#out+1] = le16(0)            -- MsgLength
-out[#out+1] = le32(0)            -- MsgOffset
-out[#out+1] = le32(0)            -- Reserved
+out[#out+1] = le16(num_orders)
+out[#out+1] = le16(0)                       -- InsNum
+out[#out+1] = le16(num_samples)
+out[#out+1] = le16(num_patterns)
+out[#out+1] = le16(0x0214)                  -- Cwt
+out[#out+1] = le16(0x0214)                  -- Cmwt
+out[#out+1] = le16(0x0009)                  -- Flags (stereo + linear slides)
+out[#out+1] = le16(0x0001)                  -- Special
+out[#out+1] = string.char(128)              -- GV
+out[#out+1] = string.char(48)               -- MV
+out[#out+1] = string.char(4)                -- Speed (ticks per row)
+out[#out+1] = string.char(160)              -- Tempo (BPM)
+out[#out+1] = string.char(128)              -- Sep
+out[#out+1] = string.char(0)                -- PWD
+out[#out+1] = le16(0)                       -- MsgLength
+out[#out+1] = le32(0)                       -- MsgOffset
+out[#out+1] = le32(0)                       -- Reserved
 
--- Channel pan (64 bytes) - 4 active channels
+-- Channel pan: slight stereo spread
+local pans = {20, 44, 28, 36}  -- melody left-ish, accomp right-ish
 local chanpan = {}
-for i = 1, 4 do chanpan[i] = string.char(32) end  -- center pan
+for i = 1, 4 do chanpan[i] = string.char(pans[i]) end
 for i = 5, 64 do chanpan[i] = string.char(128 + 32) end  -- disabled
 out[#out+1] = table.concat(chanpan)
 
--- Channel volume (64 bytes)
+-- Channel volume
 local chanvol = {}
 for i = 1, 64 do chanvol[i] = string.char(64) end
 out[#out+1] = table.concat(chanvol)
 
 -- Orders
 for i = 1, num_orders do
-    out[#out+1] = string.char(0)  -- all play pattern 0
+    out[#out+1] = string.char(0)
 end
 
--- Sample pointers (no instrument pointers since InsNum=0)
+-- Sample pointers
 for i = 1, num_samples do
     out[#out+1] = le32(sample_headers_start + (i-1) * sample_header_size)
 end
 
--- Pattern pointers
+-- Pattern pointer
 out[#out+1] = le32(pattern_start)
 
--- Sample headers (80 bytes each)
-local c5_freqs = {8363, 8363, 8363, 8363}  -- base frequencies
-for i = 1, num_samples do
+-- Sample headers
+for i, s in ipairs(samples) do
     local sh = {}
-    sh[#sh+1] = "IMPS"                      -- magic
+    sh[#sh+1] = "IMPS"
     sh[#sh+1] = string.rep("\0", 12)         -- DOS filename
     sh[#sh+1] = string.char(0)               -- zero
-    sh[#sh+1] = string.char(64)              -- GvL (global volume)
-    sh[#sh+1] = string.char(0x11)            -- Flg (sample present + loop)
-    sh[#sh+1] = string.char(64)              -- Vol (default volume)
-    local sname = "SynthSample"
-    sh[#sh+1] = sname .. string.rep("\0", 26 - #sname)  -- name (26 bytes)
-    sh[#sh+1] = string.char(0)               -- Cvt (unsigned samples)
+    sh[#sh+1] = string.char(64)              -- GvL
+    sh[#sh+1] = string.char(0x11)            -- Flg (sample + loop)
+    sh[#sh+1] = string.char(64)              -- Vol
+    local sname = "Sample " .. i
+    sh[#sh+1] = sname .. string.rep("\0", 26 - #sname)
+    sh[#sh+1] = string.char(0)               -- Cvt (unsigned)
     sh[#sh+1] = string.char(0)               -- DfP
-    sh[#sh+1] = le32(sample_len)             -- Length
+    sh[#sh+1] = le32(s.len)                  -- Length
     sh[#sh+1] = le32(0)                      -- LoopBegin
-    sh[#sh+1] = le32(sample_len)             -- LoopEnd
-    sh[#sh+1] = le32(c5_freqs[i])            -- C5Speed
+    sh[#sh+1] = le32(s.len)                  -- LoopEnd
+    sh[#sh+1] = le32(s.c5)                   -- C5Speed
     sh[#sh+1] = le32(0)                      -- SusLoopBegin
     sh[#sh+1] = le32(0)                      -- SusLoopEnd
-    sh[#sh+1] = le32(sample_data_start + (i-1) * sample_len)  -- SamplePointer
+    sh[#sh+1] = le32(sample_offsets[i])       -- SamplePointer
     sh[#sh+1] = string.char(0)               -- ViS
     sh[#sh+1] = string.char(0)               -- ViD
     sh[#sh+1] = string.char(0)               -- ViR
     sh[#sh+1] = string.char(0)               -- ViT
     local header = table.concat(sh)
-    -- Pad to 80 bytes
     out[#out+1] = header .. string.rep("\0", 80 - #header)
 end
 
 -- Pattern
-out[#out+1] = le16(#pat_data)    -- packed size
-out[#out+1] = le16(num_rows)     -- rows
-out[#out+1] = le32(0)            -- reserved
+out[#out+1] = le16(#pat_data)
+out[#out+1] = le16(num_rows)
+out[#out+1] = le32(0)
 out[#out+1] = pat_data
 
--- Sample data (4 copies of the same square wave)
-for i = 1, num_samples do
-    out[#out+1] = sample_data
+-- Sample data
+for _, s in ipairs(samples) do
+    out[#out+1] = s.data
 end
 
 -- Write file
@@ -259,4 +293,5 @@ local filename = arg[1] or "mozart_k550.it"
 local f = io.open(filename, "wb")
 f:write(table.concat(out))
 f:close()
-print("Generated " .. filename .. " (" .. #table.concat(out) .. " bytes)")
+local total = #table.concat(out)
+print(string.format("Generated %s (%d bytes, %d rows, %d orders)", filename, total, num_rows, num_orders))
