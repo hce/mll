@@ -23,6 +23,9 @@ struct CodeGen {
     /// Used to distinguish known-safe function calls from potentially expensive
     /// calls to unknown function parameters in non-strict contexts.
     top_level_names: std::collections::HashSet<String>,
+    /// Record field accessors: maps accessor name to 1-based field index.
+    /// Used to inline field access as direct table indexing.
+    record_accessors: std::collections::HashMap<String, usize>,
     /// Demand analysis: per-function parameter strictness.
     demand_info: DemandInfo,
     output: String,
@@ -38,6 +41,7 @@ impl CodeGen {
             params_always_cheap: std::collections::HashMap::new(),
             inline_fns: std::collections::HashMap::new(),
             top_level_names: std::collections::HashSet::new(),
+            record_accessors: std::collections::HashMap::new(),
             demand_info: DemandInfo { strict_params: std::collections::HashMap::new() },
             output: String::new(), indent: 0,
         }
@@ -166,16 +170,10 @@ impl CodeGen {
             self.gen_function(func);
         }
 
-        // Emit record field accessors
-        if !module.record_accessors.is_empty() {
-            self.emit_line("-- Record accessors");
-            for (name, idx) in &module.record_accessors {
-                self.emit_line(&format!(
-                    "local function {}(_r) return _r[{}] end",
-                    sanitize_name(name), idx
-                ));
-            }
-            self.emit_line("");
+        // Record field accessors: inline as direct table indexing instead of
+        // emitting local functions (saves Lua local variable slots)
+        for (name, idx) in &module.record_accessors {
+            self.record_accessors.insert(sanitize_name(name), *idx);
         }
 
         // Forward-declare all functions (user + specializations) to support
@@ -1190,6 +1188,15 @@ impl CodeGen {
             }
             TExprKind::Lit(lit) => self.gen_literal(lit),
             TExprKind::App(func, arg) => {
+                // Record field accessor: inline as direct table indexing
+                if let TExprKind::Var(name) = &func.kind {
+                    if let Some(&idx) = self.record_accessors.get(&sanitize_name(name)) {
+                        self.gen_expr(arg);
+                        self.emit(&format!("[{}]", idx));
+                        return;
+                    }
+                }
+
                 // Check for cons application: (:) x xs => __mll_cons(x, xs)
                 if let TExprKind::App(inner_f, inner_arg) = &func.kind {
                     if let TExprKind::Con(name) = &inner_f.kind {
