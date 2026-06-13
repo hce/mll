@@ -1578,6 +1578,28 @@ impl Parser {
                 self.advance();
                 let scrutinee = self.parse_expr()?;
                 self.expect(&Token::Of)?;
+
+                // Inline brace syntax: case x of { A -> e1; B -> e2 }
+                if self.at(&Token::LeftBrace) {
+                    self.advance();
+                    let mut branches = Vec::new();
+                    loop {
+                        self.skip_newlines_and_indent();
+                        if self.at(&Token::RightBrace) { break; }
+                        let pattern = self.parse_pattern()?;
+                        self.expect(&Token::Arrow)?;
+                        let body = self.parse_expr()?;
+                        branches.push(CaseBranch { pattern, guards: vec![], body });
+                        if self.at(&Token::Semicolon) { self.advance(); } else { break; }
+                    }
+                    self.expect(&Token::RightBrace)?;
+                    return Ok(Expr::Case {
+                        scrutinee: Box::new(scrutinee),
+                        branches,
+                    });
+                }
+
+                // Layout-based syntax
                 self.skip_newlines_and_indent();
                 let case_indent = self.current_indent;
                 let mut branches = Vec::new();
