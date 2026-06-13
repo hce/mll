@@ -18,7 +18,7 @@ if [ -z "$MLL" ] || [ ! -x "$MLL" ]; then
     exit 1
 fi
 
-TEST_IT="$SCRIPT_DIR/tests/mozart_k550.it"
+TEST_IT="$SCRIPT_DIR/tests/benchmark.it"
 
 # Generate test file if missing
 if [ ! -f "$TEST_IT" ]; then

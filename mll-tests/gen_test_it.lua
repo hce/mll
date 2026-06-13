@@ -1,7 +1,6 @@
 #!/usr/bin/env lua
--- Generate a minimal Impulse Tracker (.it) file for benchmarking.
--- Uses the opening theme of Mozart's Symphony No. 40 in G minor (K.550).
--- Composition is public domain; samples are synthetic square waves.
+-- Generate a synthetic Impulse Tracker (.it) file for benchmarking.
+-- 4-channel module with synthetic square wave samples.
 
 local function le16(n) return string.char(n % 256, math.floor(n / 256) % 256) end
 local function le32(n) return string.char(n % 256, math.floor(n / 256) % 256, math.floor(n / 65536) % 256, math.floor(n / 16777216) % 256) end
@@ -168,7 +167,7 @@ local out = {}
 
 -- IT Header (192 bytes)
 out[#out+1] = "IMPM"                        -- magic
-local song_name = "Mozart K550"
+local song_name = "MLL Benchmark"
 out[#out+1] = song_name .. string.rep("\0", 26 - #song_name) -- song name (26 bytes)
 out[#out+1] = le16(0x1004)                  -- pattern row highlight
 out[#out+1] = le16(num_orders)   -- OrdNum
@@ -255,7 +254,7 @@ for i = 1, num_samples do
 end
 
 -- Write file
-local filename = arg[1] or "mozart_k550.it"
+local filename = arg[1] or "benchmark.it"
 local f = io.open(filename, "wb")
 f:write(table.concat(out))
 f:close()
