@@ -87,6 +87,7 @@ pub fn compile(source: &str, source_dir: &Path, lib_paths: &[&Path]) -> Result<C
         decls: prelude_decls.into_iter()
             .chain(module.decls.into_iter())
             .collect(),
+        exports: None,
     };
     let local_start = module.decls.len() - own_count;
 

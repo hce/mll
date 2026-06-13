@@ -21,6 +21,8 @@ impl std::fmt::Display for Span {
 #[derive(Debug, Clone)]
 pub struct Module {
     pub decls: Vec<Decl>,
+    /// Module export list. None = export everything, Some = only these names.
+    pub exports: Option<Vec<String>>,
 }
 
 /// Top-level declarations.

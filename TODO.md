@@ -99,7 +99,7 @@ MATA-LL TODO
 - [x] Backtick sections (`(`div` 2)` as a function)
 - [x] Local function definitions in do-let (`let f x = ...`)
 - [x] Inline case syntax (`case x of { A -> ...; B -> ... }`)
-- [ ] Module export control (restrict which names a module exposes)
+- [~] Module export control (export list parsed; enforcement in typechecker pending)
 - [ ] where blocks at module level (partially supported)
 
 ## Can defer

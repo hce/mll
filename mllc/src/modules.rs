@@ -96,13 +96,18 @@ impl ModuleLoader {
                     // Recursively resolve imports in the imported module
                     let resolved = self.resolve_imports(&imported)?;
 
+                    // All non-import declarations are included for compilation
+                    // (exported functions may depend on internal helpers).
+                    // TODO: enforce export visibility in the type environment
+                    // so importers can't directly reference unexported names.
+                    let exported: Vec<&Decl> = resolved.decls.iter()
+                        .filter(|d| !matches!(d, Decl::Import { .. }))
+                        .collect();
+
                     match items {
                         ImportItems::All => {
-                            // Import everything (except imports themselves)
-                            for d in &resolved.decls {
-                                if !matches!(d, Decl::Import { .. }) {
-                                    imported_decls.push(d.clone());
-                                }
+                            for d in &exported {
+                                imported_decls.push((*d).clone());
                             }
                         }
                         ImportItems::Specific(items) => {
@@ -114,20 +119,18 @@ impl ModuleLoader {
                                 }
                             }).collect();
 
-                            for d in &resolved.decls {
+                            for d in &exported {
                                 let name = decl_name(d);
                                 if let Some(n) = name {
                                     if wanted.contains(&n) {
-                                        imported_decls.push(d.clone());
+                                        imported_decls.push((*d).clone());
                                     }
                                 }
                             }
                         }
                         ImportItems::Qualified(alias) => {
-                            for d in &resolved.decls {
-                                if !matches!(d, Decl::Import { .. }) {
-                                    imported_decls.push(prefix_decl(d, alias));
-                                }
+                            for d in &exported {
+                                imported_decls.push(prefix_decl(d, alias));
                             }
                         }
                     }
@@ -140,7 +143,7 @@ impl ModuleLoader {
 
         // Merge: imported first, then own
         imported_decls.extend(own_decls);
-        Ok(Module { decls: imported_decls })
+        Ok(Module { decls: imported_decls, exports: None })
     }
 }
 

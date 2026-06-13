@@ -99,7 +99,8 @@ impl Parser {
         let mut decls = Vec::new();
         self.skip_indent();
 
-        // Skip optional `module Name where` header
+        // Parse optional `module Name (exports) where` header
+        let mut module_exports: Option<Vec<String>> = None;
         if self.at(&Token::KwModule) {
             self.advance();
             // Skip module name (may be dotted: Data.List)
@@ -109,17 +110,33 @@ impl Parser {
                     self.advance();
                 }
             }
-            // Skip optional export list in parens
+            // Parse optional export list
             if self.at(&Token::LeftParen) {
-                let mut depth = 1;
                 self.advance();
-                while depth > 0 && !self.at_eof() {
-                    match self.peek() {
-                        Token::LeftParen => { depth += 1; self.advance(); }
-                        Token::RightParen => { depth -= 1; self.advance(); }
-                        _ => { self.advance(); }
+                let mut exports = Vec::new();
+                loop {
+                    self.skip_newlines_and_indent();
+                    if self.at(&Token::RightParen) { break; }
+                    match self.peek().clone() {
+                        Token::Ident(n) => { exports.push(n); self.advance(); }
+                        Token::UpperIdent(n) => {
+                            exports.push(n); self.advance();
+                            // Skip optional (..) for Type(..)
+                            if self.at(&Token::LeftParen) {
+                                self.advance();
+                                while !self.at(&Token::RightParen) && !self.at_eof() {
+                                    self.advance();
+                                }
+                                if self.at(&Token::RightParen) { self.advance(); }
+                            }
+                        }
+                        Token::Operator(op) => { exports.push(op); self.advance(); }
+                        _ => { self.advance(); } // skip unknown
                     }
+                    if self.at(&Token::Comma) { self.advance(); } else { break; }
                 }
+                if self.at(&Token::RightParen) { self.advance(); }
+                module_exports = Some(exports);
             }
             if self.at(&Token::Where) {
                 self.advance();
@@ -147,7 +164,7 @@ impl Parser {
             merged.push(decl);
         }
 
-        Ok(Module { decls: merged })
+        Ok(Module { decls: merged, exports: module_exports })
     }
 
     fn parse_decl(&mut self) -> Result<Vec<Decl>, String> {
