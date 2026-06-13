@@ -654,6 +654,22 @@ impl Checker {
             );
         }
 
+        // Monad instance for [] (lists)
+        // >>= is concatMap, >> is concatMap (\_ -> k)
+        {
+            let mut method_fns = HashMap::new();
+            method_fns.insert(">>=".to_string(), "concatMap".to_string());
+            method_fns.insert(">>".to_string(), "then_List".to_string());
+            self.instances.insert(
+                ("Monad".to_string(), "[]".to_string()),
+                InstanceInfo {
+                    class_name: "Monad".to_string(),
+                    target_type: Ty::Con("[]".to_string()),
+                    method_fns,
+                },
+            );
+        }
+
         // Built-in Show typeclass
         let show_ty = Ty::arrow(ta.clone(), Ty::Con("String".into()));
         self.classes.insert("Show".to_string(), ClassInfo {

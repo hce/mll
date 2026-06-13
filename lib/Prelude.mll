@@ -51,6 +51,15 @@ reverse xs = go [] xs
         go acc [] = acc
         go acc (x:rest) = go (x:acc) rest
 
+-- List operations
+concatMap :: (a -> [b]) -> [a] -> [b]
+concatMap _ [] = []
+concatMap f (x:xs) = go (f x)
+    where go [] = concatMap f xs
+          go (y:ys) = y : go ys
+
+
+
 -- Monadic combinators
 mapM_ :: (a -> IO ()) -> [a] -> IO ()
 mapM_ _ [] = pure ()

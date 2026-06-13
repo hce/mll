@@ -2,6 +2,12 @@ use std::collections::HashMap;
 use crate::ast::*;
 use crate::lexer::{Located, Token};
 
+/// List comprehension qualifier (internal to parser, desugared before AST)
+enum ListCompQual {
+    Generator { name: String, expr: Expr },
+    Guard(Expr),
+}
+
 pub struct Parser {
     tokens: Vec<Located>,
     pos: usize,
@@ -1198,6 +1204,78 @@ impl Parser {
     /// `expr.field` desugars to `(field expr)`.
     /// Only applies when `.` is adjacent to the preceding token (no space),
     /// to distinguish from function composition `f . g`.
+    /// Parse list comprehension qualifiers: x <- xs, pred, y <- ys, ...
+    fn parse_list_comprehension_quals(&mut self) -> Result<Vec<ListCompQual>, String> {
+        let mut quals = Vec::new();
+        loop {
+            self.skip_newlines_and_indent();
+            // Try generator: name <- expr
+            let save = self.pos;
+            let save_indent = self.current_indent;
+            if let Token::Ident(name) = self.peek().clone() {
+                self.advance();
+                if self.at(&Token::Bind) {
+                    self.advance();
+                    let expr = self.parse_expr()?;
+                    quals.push(ListCompQual::Generator { name, expr });
+                    if self.at(&Token::Comma) { self.advance(); continue; }
+                    break;
+                }
+                // Not a generator — backtrack and parse as guard
+                self.pos = save;
+                self.current_indent = save_indent;
+            }
+            // Guard expression
+            let expr = self.parse_expr()?;
+            quals.push(ListCompQual::Guard(expr));
+            if self.at(&Token::Comma) { self.advance(); continue; }
+            break;
+        }
+        Ok(quals)
+    }
+
+    /// Desugar [expr | quals] into concatMap / if chains
+    /// [e | x <- xs, rest] => concatMap (\x -> [e | rest]) xs
+    /// [e | pred, rest]    => if pred then [e | rest] else []
+    /// [e]                 => [e] (singleton)
+    fn desugar_list_comprehension(&self, body: Expr, quals: &[ListCompQual]) -> Expr {
+        if quals.is_empty() {
+            // Singleton list: [body]
+            return Expr::App(
+                Box::new(Expr::App(
+                    Box::new(Expr::Con(":".to_string())),
+                    Box::new(body),
+                )),
+                Box::new(Expr::Con("[]".to_string())),
+            );
+        }
+        match &quals[0] {
+            ListCompQual::Generator { name, expr } => {
+                // concatMap (\name -> [body | rest]) expr
+                let rest = self.desugar_list_comprehension(body, &quals[1..]);
+                Expr::App(
+                    Box::new(Expr::App(
+                        Box::new(Expr::Var("concatMap".to_string())),
+                        Box::new(Expr::Lambda {
+                            params: vec![name.clone()],
+                            body: Box::new(rest),
+                        }),
+                    )),
+                    Box::new(expr.clone()),
+                )
+            }
+            ListCompQual::Guard(pred) => {
+                // if pred then [body | rest] else []
+                let rest = self.desugar_list_comprehension(body, &quals[1..]);
+                Expr::If {
+                    cond: Box::new(pred.clone()),
+                    then_branch: Box::new(rest),
+                    else_branch: Box::new(Expr::Con("[]".to_string())),
+                }
+            }
+        }
+    }
+
     fn parse_expr_atom_dotted(&mut self) -> Result<Expr, String> {
         let mut expr = self.parse_expr_atom()?;
 
@@ -1402,16 +1480,25 @@ impl Parser {
             }
             Token::LeftBracket => {
                 self.advance();
-                let mut items = Vec::new();
-                if !self.at(&Token::RightBracket) {
+                if self.at(&Token::RightBracket) {
+                    self.advance();
+                    return Ok(Expr::Con("[]".to_string()));
+                }
+                let first = self.parse_expr()?;
+                // Check for list comprehension: [expr | qualifiers]
+                if self.at(&Token::Pipe) {
+                    self.advance();
+                    let quals = self.parse_list_comprehension_quals()?;
+                    self.expect(&Token::RightBracket)?;
+                    return Ok(self.desugar_list_comprehension(first, &quals));
+                }
+                // Regular list literal
+                let mut items = vec![first];
+                while self.at(&Token::Comma) {
+                    self.advance();
                     items.push(self.parse_expr()?);
-                    while self.at(&Token::Comma) {
-                        self.advance();
-                        items.push(self.parse_expr()?);
-                    }
                 }
                 self.expect(&Token::RightBracket)?;
-                // Build a list from constructors
                 let mut list = Expr::Con("[]".to_string());
                 for item in items.into_iter().rev() {
                     list = Expr::App(
