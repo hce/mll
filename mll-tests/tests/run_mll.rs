@@ -71,6 +71,7 @@ mll_test!(fizzbuzz, "fizzbuzz.mll");
 mll_test!(purehashmap, "purehashmap.mll");
 mll_test!(poly_recursion, "poly_recursion.mll");
 mll_test!(non_strict, "non_strict.mll");
+mll_test!(io_actions, "io_actions.mll");
 
 // Compile-error tests: these SHOULD fail to compile
 #[test]

@@ -1188,6 +1188,13 @@ impl CodeGen {
                         self.emit(&format!("{} = ", bind.name));
                         self.gen_expr(else_branch);
                         self.emit(" end\n");
+                    } else if Self::is_nullary_action_type(&bind.body.ty) {
+                        // IO/ST action: wrap in a repeatable closure, NOT __thunk
+                        // (thunks cache their result, but actions must re-execute each time)
+                        self.emit_indent();
+                        self.emit(&format!("local {} = function() return ", bind.name));
+                        self.gen_action(&bind.body);
+                        self.emit(" end\n");
                     } else {
                         self.emit_indent();
                         if Self::is_cheap(&bind.body) {
