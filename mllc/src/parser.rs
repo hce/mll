@@ -1109,11 +1109,42 @@ impl Parser {
     }
 
     fn parse_expr_app(&mut self) -> Result<Expr, String> {
+        // Record the column of the function being applied — continuation
+        // lines must be indented past this column, not just past the line indent.
+        let app_col = self.peek_loc().col as usize;
         let mut func = self.parse_expr_atom_dotted()?;
+        let mut has_args = false;
 
-        while self.is_expr_atom_start_in_context() {
-            let arg = self.parse_expr_atom_dotted()?;
-            func = Expr::App(Box::new(func), Box::new(arg));
+        loop {
+            // Same-line arguments (existing behavior)
+            if self.is_expr_atom_start_in_context() {
+                let arg = self.parse_expr_atom_dotted()?;
+                func = Expr::App(Box::new(func), Box::new(arg));
+                has_args = true;
+                continue;
+            }
+
+            // Cross-line continuation: if the next line is indented strictly
+            // past the function's column, treat atoms as more arguments.
+            // Only applies when we already have at least one same-line argument
+            // (bare values like `10` don't get continuation args).
+            if has_args && matches!(self.peek(), Token::Newline | Token::Indent(_)) {
+                let save_pos = self.pos;
+                let save_indent = self.current_indent;
+                self.skip_newlines_and_indent();
+                if self.current_indent > app_col
+                    && self.is_expr_atom_start()
+                {
+                    let arg = self.parse_expr_atom_dotted()?;
+                    func = Expr::App(Box::new(func), Box::new(arg));
+                    continue;
+                }
+                // Not a continuation — backtrack
+                self.pos = save_pos;
+                self.current_indent = save_indent;
+            }
+
+            break;
         }
 
         Ok(func)

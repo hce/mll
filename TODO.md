@@ -89,7 +89,7 @@ MATA-LL TODO
 
 ## Parser
 
-- [ ] Multi-line function application (arguments on continuation lines) — needs layout rule to distinguish from new declarations
+- [x] Multi-line function application (continuation lines indented past function column)
 - [x] Multi-binding `let` in `do` blocks
 - [x] Guards in combination with `where` clauses
 
