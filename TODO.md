@@ -90,8 +90,8 @@ MATA-LL TODO
 ## Parser
 
 - [ ] Multi-line function application (arguments on continuation lines) — needs layout rule to distinguish from new declarations
-- [ ] Multi-binding `let` in `do` blocks (currently need separate `let` per binding)
-- [ ] Guards in combination with `where` clauses (parser returns early for guarded clauses)
+- [x] Multi-binding `let` in `do` blocks
+- [x] Guards in combination with `where` clauses
 
 ## Can defer
 
