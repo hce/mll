@@ -20,7 +20,14 @@ appI (x:xs) ys = x : appI xs ys
 
 -- ========== Module Info (parsed once, threaded read-only) ==========
 
-data ModInfo = ModInfo { miFd :: ByteString, miOrdNum :: Integer, miSpeed :: Integer, miTempo :: Integer, miNumCh :: Integer, miNumSmp :: Integer }
+data ModInfo = ModInfo
+    { miFd     :: ByteString
+    , miOrdNum :: Integer
+    , miSpeed  :: Integer
+    , miTempo  :: Integer
+    , miNumCh  :: Integer
+    , miNumSmp :: Integer
+    }
 
 -- ========== Header ==========
 
