@@ -93,7 +93,7 @@ MATA-LL TODO
 
 ## Haskell compatibility gaps
 
-- [ ] Eq for [a] and Maybe a (parameterized typeclass instances)
+- [x] Eq for [a] and Maybe a (parameterized typeclass instances)
 - [ ] deriving Ord
 - [ ] List comprehensions
 - [ ] Backtick sections (`(`div` 2)` as a function)

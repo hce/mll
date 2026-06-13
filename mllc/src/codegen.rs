@@ -111,7 +111,8 @@ impl CodeGen {
             "__mll_hashstr", "hashmap_empty", "hashmap_insert", "hashmap_lookup",
             "hashmap_delete", "hashmap_size", "hashmap_keys", "hashmap_values",
             "hashmap_member", "hashmap_fromList",
-            "__mll_show_list", "__mll_try", "__mll_iter", "getArgs", "exit_",
+            "__mll_show_list", "__mll_list_eq", "__mll_maybe_eq",
+            "__mll_try", "__mll_iter", "getArgs", "exit_",
             "__mll_bxor", "__mll_band", "__mll_bor", "__mll_bnot",
             "__mll_shl", "__mll_shr",
             "__mll_array_from_list", "__mll_array_index", "__mll_array_length",
@@ -1618,6 +1619,20 @@ impl CodeGen {
                         }
                     }
                     self.emit(" }");
+                } else if let Some(elem_eq) = specialized.strip_prefix("__mll_list_eq:") {
+                    // List eq: recursive element-wise comparison
+                    self.emit(&format!("__mll_list_eq({}, ", elem_eq));
+                    self.gen_expr(&args[0]);
+                    self.emit(", ");
+                    self.gen_expr(&args[1]);
+                    self.emit(")");
+                } else if let Some(elem_eq) = specialized.strip_prefix("__mll_maybe_eq:") {
+                    // Maybe eq: Nothing==Nothing, Just a == Just b iff a==b
+                    self.emit(&format!("__mll_maybe_eq({}, ", elem_eq));
+                    self.gen_expr(&args[0]);
+                    self.emit(", ");
+                    self.gen_expr(&args[1]);
+                    self.emit(")");
                 } else if let Some(rest) = specialized.strip_prefix("__mll_tuple_eq:") {
                     // Tuple eq: compare element-wise
                     // Format: __mll_tuple_eq:N:eq_E1,eq_E2,...
@@ -2202,6 +2217,21 @@ local function show_HashMap(m) m = __force(m); local parts = {} for k, v in pair
 local function hashmap_fromList(xs) xs = __force(xs); local t = {} local cur = xs while cur ~= nil do local pair = __mll_head(cur) t[__force(pair[1])] = __force(pair[2]) cur = __mll_tail(cur) end return t end
 
 -- Specialized list show: uses a typed element show function
+local function __mll_list_eq(elem_eq, a, b)
+    a = __force(a); b = __force(b)
+    while true do
+        if a == nil and b == nil then return true end
+        if a == nil or b == nil then return false end
+        if not elem_eq(__force(a[1]), __force(b[1])) then return false end
+        a = __mll_tail(a); b = __mll_tail(b)
+    end
+end
+local function __mll_maybe_eq(elem_eq, a, b)
+    a = __force(a); b = __force(b)
+    if a == nil and b == nil then return true end
+    if a == nil or b == nil then return false end
+    return elem_eq(a, b)
+end
 local function __mll_show_list(elem_show, xs)
     xs = __force(xs)
     if xs == nil then return "[]" end

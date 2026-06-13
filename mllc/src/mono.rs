@@ -410,6 +410,65 @@ impl Monomorphizer {
                             ),
                             ty,
                         };
+                    } else if let Ty::List(elem_ty) = &lhs.ty {
+                        if op == "==" || op == "/=" {
+                            let mangled = self.generate_list_eq(elem_ty);
+                            let mono_lhs = self.mono_expr(*lhs);
+                            let mono_rhs = self.mono_expr(*rhs);
+                            let eq_call = TExpr {
+                                kind: TExprKind::App(
+                                    Box::new(TExpr::new(
+                                        TExprKind::App(
+                                            Box::new(TExpr::new(TExprKind::Var(mangled), Ty::Unit)),
+                                            Box::new(mono_lhs),
+                                        ),
+                                        Ty::Unit,
+                                    )),
+                                    Box::new(mono_rhs),
+                                ),
+                                ty: ty.clone(),
+                            };
+                            if op == "/=" {
+                                return TExpr {
+                                    kind: TExprKind::App(
+                                        Box::new(TExpr::new(TExprKind::Var("not_".to_string()), Ty::Unit)),
+                                        Box::new(eq_call),
+                                    ),
+                                    ty,
+                                };
+                            }
+                            return eq_call;
+                        }
+                    } else if Self::is_maybe_type(&lhs.ty) {
+                        if op == "==" || op == "/=" {
+                            let inner_ty = Self::maybe_inner_type(&lhs.ty).unwrap();
+                            let mangled = self.generate_maybe_eq(&inner_ty);
+                            let mono_lhs = self.mono_expr(*lhs);
+                            let mono_rhs = self.mono_expr(*rhs);
+                            let eq_call = TExpr {
+                                kind: TExprKind::App(
+                                    Box::new(TExpr::new(
+                                        TExprKind::App(
+                                            Box::new(TExpr::new(TExprKind::Var(mangled), Ty::Unit)),
+                                            Box::new(mono_lhs),
+                                        ),
+                                        Ty::Unit,
+                                    )),
+                                    Box::new(mono_rhs),
+                                ),
+                                ty: ty.clone(),
+                            };
+                            if op == "/=" {
+                                return TExpr {
+                                    kind: TExprKind::App(
+                                        Box::new(TExpr::new(TExprKind::Var("not_".to_string()), Ty::Unit)),
+                                        Box::new(eq_call),
+                                    ),
+                                    ty,
+                                };
+                            }
+                            return eq_call;
+                        }
                     } else if let Ty::Tuple(elem_tys) = &lhs.ty {
                         if op == "==" || op == "/=" {
                             let mangled = self.generate_tuple_eq(elem_tys);
@@ -567,6 +626,109 @@ impl Monomorphizer {
                 guards: vec![],
                 body,
                 where_binds: vec![],
+            }],
+            specialized: true,
+            dict_params: vec![],
+        };
+        self.generated.push(func);
+        mangled
+    }
+
+    fn generate_list_eq(&mut self, elem_ty: &Ty) -> String {
+        let list_ty = Ty::List(Box::new(elem_ty.clone()));
+        let mangled = format!("eq_{}", self.ty_to_suffix(&list_ty));
+
+        let key = ("==".to_string(), format!("{}", list_ty));
+        if let Some(existing) = self.instance_methods.get(&key) {
+            return existing.clone();
+        }
+        self.instance_methods.insert(key, mangled.clone());
+
+        let elem_eq = self.instance_methods
+            .get(&("==".to_string(), format!("{}", elem_ty)))
+            .cloned()
+            .unwrap_or_else(|| "eq".to_string());
+
+        let bool_ty = Ty::Con("Bool".to_string());
+        let body = TExpr::new(
+            TExprKind::SpecCall {
+                original: mangled.clone(),
+                specialized: format!("__mll_list_eq:{}", elem_eq),
+                args: vec![
+                    TExpr::new(TExprKind::Var("_a".into()), list_ty.clone()),
+                    TExpr::new(TExprKind::Var("_b".into()), list_ty.clone()),
+                ],
+            },
+            bool_ty.clone(),
+        );
+
+        let func = TFunction {
+            name: mangled.clone(),
+            ty: Ty::fun(&[list_ty.clone(), list_ty], bool_ty),
+            clauses: vec![TClause {
+                patterns: vec![
+                    TPattern::Var("_a".into(), Ty::Unit),
+                    TPattern::Var("_b".into(), Ty::Unit),
+                ],
+                guards: vec![], body, where_binds: vec![],
+            }],
+            specialized: true,
+            dict_params: vec![],
+        };
+        self.generated.push(func);
+        mangled
+    }
+
+    fn is_maybe_type(ty: &Ty) -> bool {
+        matches!(ty, Ty::App(f, _) if matches!(f.as_ref(), Ty::Con(n) if n == "Maybe"))
+    }
+
+    fn maybe_inner_type(ty: &Ty) -> Option<Ty> {
+        if let Ty::App(f, inner) = ty {
+            if matches!(f.as_ref(), Ty::Con(n) if n == "Maybe") {
+                return Some(*inner.clone());
+            }
+        }
+        None
+    }
+
+    fn generate_maybe_eq(&mut self, inner_ty: &Ty) -> String {
+        let maybe_ty = Ty::app(Ty::Con("Maybe".into()), inner_ty.clone());
+        let mangled = format!("eq_{}", self.ty_to_suffix(&maybe_ty));
+
+        let key = ("==".to_string(), format!("{}", maybe_ty));
+        if let Some(existing) = self.instance_methods.get(&key) {
+            return existing.clone();
+        }
+        self.instance_methods.insert(key, mangled.clone());
+
+        let elem_eq = self.instance_methods
+            .get(&("==".to_string(), format!("{}", inner_ty)))
+            .cloned()
+            .unwrap_or_else(|| "eq".to_string());
+
+        let bool_ty = Ty::Con("Bool".to_string());
+        let body = TExpr::new(
+            TExprKind::SpecCall {
+                original: mangled.clone(),
+                specialized: format!("__mll_maybe_eq:{}", elem_eq),
+                args: vec![
+                    TExpr::new(TExprKind::Var("_a".into()), maybe_ty.clone()),
+                    TExpr::new(TExprKind::Var("_b".into()), maybe_ty.clone()),
+                ],
+            },
+            bool_ty.clone(),
+        );
+
+        let func = TFunction {
+            name: mangled.clone(),
+            ty: Ty::fun(&[maybe_ty.clone(), maybe_ty], bool_ty),
+            clauses: vec![TClause {
+                patterns: vec![
+                    TPattern::Var("_a".into(), Ty::Unit),
+                    TPattern::Var("_b".into(), Ty::Unit),
+                ],
+                guards: vec![], body, where_binds: vec![],
             }],
             specialized: true,
             dict_params: vec![],

@@ -129,13 +129,14 @@ test_lists :: IO ()
 test_lists = do
     -- Construction
     assert (head [1, 2, 3] == 1) "head"
-    -- Note: [a] == [a] not yet supported (no Eq instance for lists)
+    assert (tail [1, 2, 3] == [2, 3]) "tail"
+    assert (1 : [2, 3] == [1, 2, 3]) "cons"
     -- Higher-order
-    assert (head (map (* 2) [1, 2, 3]) == 2) "map head"
-    assert (head (filter (> 2) [1, 2, 3, 4]) == 3) "filter head"
+    assert (map (* 2) [1, 2, 3] == [2, 4, 6]) "map"
+    assert (filter (> 2) [1, 2, 3, 4] == [3, 4]) "filter"
     assert (foldl (+) 0 [1, 2, 3] == 6) "foldl"
     assert (length [1, 2, 3] == 3) "length"
-    assert (head (reverse [1, 2, 3]) == 3) "reverse"
+    assert (reverse [1, 2, 3] == [3, 2, 1]) "reverse"
 
 -- ============================================================
 -- Chapter 8: IO
@@ -210,7 +211,8 @@ main = do
     assert (Red /= Blue) "color neq"
     assert (show Green == "Green") "color show"
     assert (pointX (Point 3.0 4.0) == 3.0) "record access"
-    -- Note: Maybe a == Maybe a not yet supported (no Eq for Maybe)
+    assert (safeDivide 10 3 == Just 3) "safe divide ok"
+    assert (safeDivide 10 0 == Nothing) "safe divide zero"
     assert (isWeekend Sat == True) "weekend sat"
     assert (isWeekend Mon == False) "weekday mon"
     assert (Low /= High) "priority neq"
