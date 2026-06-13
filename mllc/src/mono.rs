@@ -183,6 +183,8 @@ impl Monomorphizer {
     fn resolve_parameterized_instance(&self, method: &str, concrete_ty: &Ty) -> Option<String> {
         let base = match concrete_ty {
             Ty::List(_) => "[]",
+            Ty::IO(_) => "IO",
+            Ty::LuaIO(_, _) => "LuaIO",
             Ty::App(f, _) => {
                 let mut head = f.as_ref();
                 loop {
@@ -440,7 +442,28 @@ impl Monomorphizer {
                         self.errors.push(format!(
                             "No instance for '{}' on type '{}'", op, ty_str
                         ));
-                    } else if self.resolve_parameterized_instance(&op, &lhs.ty).is_none() {
+                    } else if let Some(mangled) = self.resolve_parameterized_instance(&op, &lhs.ty) {
+                        // Parameterized instance found. If the mangled name differs
+                        // from the operator, transform to a function call. If it
+                        // matches (e.g. IO monad's >>= stays >>=), keep as InfixApp.
+                        if mangled != op {
+                            let mono_lhs = self.mono_expr(*lhs);
+                            let mono_rhs = self.mono_expr(*rhs);
+                            return TExpr {
+                                kind: TExprKind::App(
+                                    Box::new(TExpr::new(
+                                        TExprKind::App(
+                                            Box::new(TExpr::new(TExprKind::Var(mangled), Ty::Unit)),
+                                            Box::new(mono_lhs),
+                                        ),
+                                        Ty::Unit,
+                                    )),
+                                    Box::new(mono_rhs),
+                                ),
+                                ty,
+                            };
+                        }
+                    } else {
                         self.errors.push(format!(
                             "No instance for '{}' on type '{}'", op, ty_str
                         ));

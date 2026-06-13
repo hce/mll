@@ -576,17 +576,39 @@ impl Checker {
             ty: Ty::arrow(sta_s.clone(), st_s(Ty::list(int.clone()))),
         });
 
-        // Built-in Monad typeclass (simplified: IO is the only instance)
-        // >>=  :: IO a -> (a -> IO b) -> IO b
-        // pure :: a -> IO a
+        // Built-in Monad typeclass
+        // >>=  :: m a -> (a -> m b) -> m b
+        // >>   :: m a -> m b -> m b
+        // pure :: a -> m a
+        let ma = Ty::App(Box::new(tm.clone()), Box::new(ta.clone()));
+        let mb = Ty::App(Box::new(tm.clone()), Box::new(tb.clone()));
         self.classes.insert("Monad".to_string(), ClassInfo {
             name: "Monad".to_string(),
             type_var: "m".to_string(),
             superclasses: vec![],
             methods: vec![
-                (">>=".to_string(), Ty::fun(&[Ty::io(ta.clone()), Ty::arrow(ta.clone(), Ty::io(tb.clone()))], Ty::io(tb.clone()))),
+                (">>=".to_string(), Ty::fun(&[ma.clone(), Ty::arrow(ta.clone(), mb.clone())], mb.clone())),
+                (">>".to_string(), Ty::fun(&[ma.clone(), mb.clone()], mb.clone())),
             ],
         });
+
+        // Monad instances for IO and LuaIO
+        // For IO: >>= and >> are compiled as bind-chain flattening (no runtime function needed).
+        // The instance method names match the operator names so the monomorphizer
+        // preserves them as InfixApp (no transformation).
+        for monad_name in &["IO", "LuaIO", "ST"] {
+            let mut method_fns = HashMap::new();
+            method_fns.insert(">>=".to_string(), ">>=".to_string());
+            method_fns.insert(">>".to_string(), ">>".to_string());
+            self.instances.insert(
+                ("Monad".to_string(), monad_name.to_string()),
+                InstanceInfo {
+                    class_name: "Monad".to_string(),
+                    target_type: Ty::Con(monad_name.to_string()),
+                    method_fns,
+                },
+            );
+        }
 
         // Built-in Show typeclass
         let show_ty = Ty::arrow(ta.clone(), Ty::Con("String".into()));

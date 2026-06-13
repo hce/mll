@@ -84,7 +84,7 @@ MATA-LL TODO
 - [x] Cross-function demand propagation (if callee is strict in position j, propagate to caller)
 - [x] Full strictness analysis (demand-driven call-site decisions, is_cheap_arg retained for trivial expressions)
 - [ ] Zero-arg LuaIterator (stdinLines) needs IO wrapping to avoid eager eval
-- [ ] Monadic operators (>>=, >>, return, pure) use hardcoded unification for IO/LuaIO instead of proper Monad typeclass dispatch — revisit once typeclass infrastructure is more mature
+- [x] Monad typeclass dispatch for >>= and >> (instances for IO, LuaIO, ST; proper error on missing instance)
 - [ ] GitHub Pages deployment for playground (currently wasm artifact only)
 
 ## Parser
