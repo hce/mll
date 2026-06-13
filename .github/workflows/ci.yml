@@ -22,8 +22,35 @@ jobs:
       - name: Run tests
         run: cargo test --workspace
 
-  merge:
+  lua-compat:
     needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build compiler
+        run: cargo build --release
+
+      - name: Install Lua versions
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.1 lua5.4 luajit
+
+      - name: Test Lua 5.1
+        run: ./mll-tests/lua-compat.sh lua5.1
+
+      - name: Test Lua 5.4
+        run: ./mll-tests/lua-compat.sh lua5.4
+
+      - name: Test LuaJIT
+        run: ./mll-tests/lua-compat.sh luajit
+
+  merge:
+    needs: [test, lua-compat]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
