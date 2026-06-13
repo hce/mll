@@ -1176,35 +1176,36 @@ impl CodeGen {
                     if let TExprKind::If { cond, then_branch, else_branch } = &bind.body.kind {
                         // If-expression as statement: avoids IIFE closure allocation
                         // local x; if cond then x = a else x = b end
+                        let bname = sanitize_name(&bind.name);
                         self.emit_indent();
-                        self.emit(&format!("local {}\n", bind.name));
-                        self.concrete_vars.insert(bind.name.clone());
+                        self.emit(&format!("local {}\n", bname));
+                        self.concrete_vars.insert(bname.clone());
                         self.emit_indent();
                         self.emit("if ");
                         self.gen_expr(cond);
                         self.emit(" then ");
-                        self.emit(&format!("{} = ", bind.name));
+                        self.emit(&format!("{} = ", bname));
                         self.gen_expr(then_branch);
                         self.emit(" else ");
-                        self.emit(&format!("{} = ", bind.name));
+                        self.emit(&format!("{} = ", bname));
                         self.gen_expr(else_branch);
                         self.emit(" end\n");
                     } else if Self::is_nullary_action_type(&bind.body.ty) {
-                        // IO/ST action: wrap in a repeatable closure, NOT __thunk
-                        // (thunks cache their result, but actions must re-execute each time)
+                        let bname = sanitize_name(&bind.name);
                         self.emit_indent();
-                        self.emit(&format!("local {} = function() return ", bind.name));
+                        self.emit(&format!("local {} = function() return ", bname));
                         self.gen_action(&bind.body);
                         self.emit(" end\n");
                     } else {
+                        let bname = sanitize_name(&bind.name);
                         self.emit_indent();
                         if Self::is_cheap(&bind.body) {
-                            self.emit(&format!("local {} = ", bind.name));
+                            self.emit(&format!("local {} = ", bname));
                             self.gen_expr(&bind.body);
                             self.emit("\n");
-                            self.concrete_vars.insert(bind.name.clone());
+                            self.concrete_vars.insert(bname);
                         } else {
-                            self.emit(&format!("local {} = __thunk(function() return ", bind.name));
+                            self.emit(&format!("local {} = __thunk(function() return ", bname));
                             self.gen_expr(&bind.body);
                             self.emit(" end)\n");
                         }

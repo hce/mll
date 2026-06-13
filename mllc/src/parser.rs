@@ -1541,8 +1541,27 @@ impl Parser {
                         self.advance();
                         let let_indent = self.current_indent;
                         let name = self.expect_ident()?;
+                        // Collect optional patterns: let f x y = expr => let f = \x y -> expr
+                        let mut params = Vec::new();
+                        while self.is_pattern_start() && !self.at(&Token::Eq) {
+                            params.push(self.parse_pattern_atom()?);
+                        }
                         self.expect(&Token::Eq)?;
-                        let expr = self.parse_expr()?;
+                        let mut expr = self.parse_expr()?;
+                        // Desugar: wrap body in a single multi-param lambda
+                        if !params.is_empty() {
+                            let param_names: Vec<String> = params.into_iter().map(|pat| {
+                                match pat {
+                                    Pattern::Var(n) => n,
+                                    Pattern::Wildcard => "_".to_string(),
+                                    _ => "_p".to_string(),
+                                }
+                            }).collect();
+                            expr = Expr::Lambda {
+                                params: param_names,
+                                body: Box::new(expr),
+                            };
+                        }
                         stmts.push(DoStmt::DoLet { name, expr });
                         // Continue parsing additional bindings at the same or deeper indent
                         loop {
@@ -1551,17 +1570,39 @@ impl Parser {
                             self.skip_newlines_and_indent();
                             if self.current_indent >= let_indent {
                                 if let Token::Ident(_) = self.peek() {
-                                    // Peek ahead for `name =`
+                                    // Peek ahead for `name [patterns] =`
                                     let save2 = self.pos;
+                                    let save2_indent = self.current_indent;
                                     let name2 = self.expect_ident().ok();
-                                    if name2.is_some() && self.at(&Token::Eq) {
-                                        self.advance(); // consume =
-                                        let expr2 = self.parse_expr()?;
-                                        stmts.push(DoStmt::DoLet { name: name2.unwrap(), expr: expr2 });
-                                        continue;
+                                    if let Some(n2) = name2 {
+                                        let mut params2 = Vec::new();
+                                        while self.is_pattern_start() && !self.at(&Token::Eq) {
+                                            if let Ok(p) = self.parse_pattern_atom() {
+                                                params2.push(p);
+                                            } else { break; }
+                                        }
+                                        if self.at(&Token::Eq) {
+                                            self.advance();
+                                            let mut expr2 = self.parse_expr()?;
+                                            if !params2.is_empty() {
+                                                let param_names: Vec<String> = params2.into_iter().map(|pat| {
+                                                    match pat {
+                                                        Pattern::Var(n) => n,
+                                                        Pattern::Wildcard => "_".to_string(),
+                                                        _ => "_p".to_string(),
+                                                    }
+                                                }).collect();
+                                                expr2 = Expr::Lambda {
+                                                    params: param_names,
+                                                    body: Box::new(expr2),
+                                                };
+                                            }
+                                            stmts.push(DoStmt::DoLet { name: n2, expr: expr2 });
+                                            continue;
+                                        }
                                     }
                                     self.pos = save2;
-                                    self.current_indent = save_indent;
+                                    self.current_indent = save2_indent;
                                 }
                             }
                             // Not a continuation binding — backtrack
