@@ -3,6 +3,10 @@
 ///
 /// A parameter marked strict can be passed eagerly at call sites
 /// (no thunk allocation) and forced at function entry.
+///
+/// Cross-function propagation: if callee `g` is strict in position j,
+/// then `f(... g(x) ...)` where x is a parameter of f propagates
+/// strictness — x is demanded because g will force it.
 
 use std::collections::{HashMap, HashSet};
 use crate::tir::*;
@@ -14,23 +18,53 @@ pub struct DemandInfo {
     pub strict_params: HashMap<String, Vec<bool>>,
 }
 
-/// Run demand analysis on a typed module.
+/// Run demand analysis on a typed module with cross-function propagation.
+/// Iterates to a fixed point: each round may discover new strict params
+/// by looking through call sites to already-known-strict callees.
 pub fn analyze(module: &TModule) -> DemandInfo {
-    let mut strict_params = HashMap::new();
+    let functions: Vec<&TFunction> = module.functions.iter()
+        .chain(module.instance_fns.iter())
+        .collect();
 
-    for func in module.functions.iter().chain(module.instance_fns.iter()) {
+    // Initial pass: analyze each function without cross-function info.
+    let mut strict_params: HashMap<String, Vec<bool>> = HashMap::new();
+    for func in &functions {
         if func.clauses.is_empty() {
             continue;
         }
-        let strictness = analyze_function(func);
+        let strictness = analyze_function(func, &strict_params);
         strict_params.insert(func.name.clone(), strictness);
+    }
+
+    // Fixed-point iteration: re-analyze with accumulated strictness info
+    // until no new strict parameters are discovered.
+    loop {
+        let mut changed = false;
+        for func in &functions {
+            if func.clauses.is_empty() {
+                continue;
+            }
+            let new_strict = analyze_function(func, &strict_params);
+            if let Some(old) = strict_params.get(&func.name) {
+                if &new_strict != old {
+                    changed = true;
+                    strict_params.insert(func.name.clone(), new_strict);
+                }
+            } else {
+                changed = true;
+                strict_params.insert(func.name.clone(), new_strict);
+            }
+        }
+        if !changed {
+            break;
+        }
     }
 
     DemandInfo { strict_params }
 }
 
 /// Analyze a single function's parameter strictness.
-fn analyze_function(func: &TFunction) -> Vec<bool> {
+fn analyze_function(func: &TFunction, env: &HashMap<String, Vec<bool>>) -> Vec<bool> {
     let clauses = &func.clauses;
     if clauses.is_empty() {
         return vec![];
@@ -45,7 +79,7 @@ fn analyze_function(func: &TFunction) -> Vec<bool> {
     let mut strict = vec![true; arity];
 
     for clause in clauses {
-        let clause_strict = analyze_clause(clause, arity);
+        let clause_strict = analyze_clause(clause, arity, env);
         // A parameter is strict only if it's strict in ALL clauses.
         for i in 0..arity {
             strict[i] = strict[i] && clause_strict[i];
@@ -56,7 +90,7 @@ fn analyze_function(func: &TFunction) -> Vec<bool> {
 }
 
 /// Analyze a single clause's parameter strictness.
-fn analyze_clause(clause: &TClause, arity: usize) -> Vec<bool> {
+fn analyze_clause(clause: &TClause, arity: usize, env: &HashMap<String, Vec<bool>>) -> Vec<bool> {
     let mut strict = vec![false; arity];
 
     // Collect parameter names from patterns.
@@ -94,9 +128,9 @@ fn analyze_clause(clause: &TClause, arity: usize) -> Vec<bool> {
 
     // Compute demanded variables from the body (and guards).
     let demanded = if clause.guards.is_empty() {
-        demanded_vars(&clause.body)
+        demanded_vars(&clause.body, env)
     } else {
-        demanded_guards(&clause.guards)
+        demanded_guards(&clause.guards, env)
     };
 
     // Mark parameters whose names appear in the demanded set.
@@ -114,7 +148,7 @@ fn analyze_clause(clause: &TClause, arity: usize) -> Vec<bool> {
 /// Compute demanded variables from a set of guards.
 /// A variable is demanded if it's demanded by ALL guard branches
 /// (intersection of bodies) plus any guard conditions.
-fn demanded_guards(guards: &[TGuard]) -> HashSet<String> {
+fn demanded_guards(guards: &[TGuard], env: &HashMap<String, Vec<bool>>) -> HashSet<String> {
     if guards.is_empty() {
         return HashSet::new();
     }
@@ -122,11 +156,11 @@ fn demanded_guards(guards: &[TGuard]) -> HashSet<String> {
     // Guard conditions are always evaluated (union).
     let mut result: HashSet<String> = HashSet::new();
     for g in guards {
-        result.extend(demanded_vars(&g.condition));
+        result.extend(demanded_vars(&g.condition, env));
     }
 
     // Guard bodies: intersect (demanded only if demanded in ALL branches).
-    let mut body_iter = guards.iter().map(|g| demanded_vars(&g.body));
+    let mut body_iter = guards.iter().map(|g| demanded_vars(&g.body, env));
     if let Some(first) = body_iter.next() {
         let intersection = body_iter.fold(first, |acc, s| &acc & &s);
         result.extend(intersection);
@@ -137,7 +171,10 @@ fn demanded_guards(guards: &[TGuard]) -> HashSet<String> {
 
 /// Core analysis: returns the set of free variables that are guaranteed
 /// to be forced when `expr` is evaluated to WHNF.
-fn demanded_vars(expr: &TExpr) -> HashSet<String> {
+///
+/// `env` contains known strictness info for other functions, enabling
+/// cross-function demand propagation.
+fn demanded_vars(expr: &TExpr, env: &HashMap<String, Vec<bool>>) -> HashSet<String> {
     match &expr.kind {
         TExprKind::Var(x) => {
             let mut s = HashSet::new();
@@ -154,10 +191,32 @@ fn demanded_vars(expr: &TExpr) -> HashSet<String> {
             HashSet::new()
         }
 
-        TExprKind::App(func, _arg) => {
-            // Evaluating f(x) forces f. Whether x is forced depends on f,
-            // which we don't know here (conservative: don't demand arg).
-            demanded_vars(func)
+        TExprKind::App(_, _) => {
+            // Flatten curried application: f x y z → (f, [x, y, z])
+            let mut f = expr;
+            let mut args_rev = Vec::new();
+            while let TExprKind::App(func, arg) = &f.kind {
+                args_rev.push(arg.as_ref());
+                f = func.as_ref();
+            }
+            args_rev.reverse();
+
+            // Always demand the function.
+            let mut s = demanded_vars(f, env);
+
+            // Cross-function propagation: if callee is a known function
+            // and is strict in position i, demand that argument's vars.
+            if let TExprKind::Var(name) = &f.kind {
+                if let Some(callee_strict) = env.get(name) {
+                    for (i, arg) in args_rev.iter().enumerate() {
+                        if callee_strict.get(i).copied().unwrap_or(false) {
+                            s.extend(demanded_vars(arg, env));
+                        }
+                    }
+                }
+            }
+
+            s
         }
 
         TExprKind::InfixApp { op, lhs, rhs } => {
@@ -166,52 +225,52 @@ fn demanded_vars(expr: &TExpr) -> HashSet<String> {
                 "+" | "-" | "*" | "/" | "div" | "mod"
                 | "==" | "/=" | "<" | ">" | "<=" | ">="
                 | "&&" | "||" | "++" => {
-                    let mut s = demanded_vars(lhs);
-                    s.extend(demanded_vars(rhs));
+                    let mut s = demanded_vars(lhs, env);
+                    s.extend(demanded_vars(rhs, env));
                     s
                 }
                 // $ forces the function (lhs) but thunks the argument.
-                "$" => demanded_vars(lhs),
+                "$" => demanded_vars(lhs, env),
                 // Cons is lazy — neither side is forced.
                 ":" => HashSet::new(),
                 // Monadic bind/sequence forces both actions.
                 ">>=" | ">>" => {
-                    let mut s = demanded_vars(lhs);
-                    s.extend(demanded_vars(rhs));
+                    let mut s = demanded_vars(lhs, env);
+                    s.extend(demanded_vars(rhs, env));
                     s
                 }
                 // Unknown operator — conservatively demand both.
                 _ => {
-                    let mut s = demanded_vars(lhs);
-                    s.extend(demanded_vars(rhs));
+                    let mut s = demanded_vars(lhs, env);
+                    s.extend(demanded_vars(rhs, env));
                     s
                 }
             }
         }
 
-        TExprKind::Negate(e) => demanded_vars(e),
+        TExprKind::Negate(e) => demanded_vars(e, env),
 
-        TExprKind::Paren(e) => demanded_vars(e),
+        TExprKind::Paren(e) => demanded_vars(e, env),
 
         TExprKind::If { cond, then_branch, else_branch } => {
-            let mut s = demanded_vars(cond);
+            let mut s = demanded_vars(cond, env);
             // Only demanded if demanded in BOTH branches.
-            let t = demanded_vars(then_branch);
-            let e = demanded_vars(else_branch);
+            let t = demanded_vars(then_branch, env);
+            let e = demanded_vars(else_branch, env);
             s.extend(&t & &e);
             s
         }
 
         TExprKind::Case { scrutinee, branches } => {
-            let mut s = demanded_vars(scrutinee);
+            let mut s = demanded_vars(scrutinee, env);
             if !branches.is_empty() {
                 // Intersect demanded vars across all branches
                 // (minus variables bound by each branch's pattern).
                 let mut branch_iter = branches.iter().map(|b| {
                     let body_demanded = if b.guards.is_empty() {
-                        demanded_vars(&b.body)
+                        demanded_vars(&b.body, env)
                     } else {
-                        demanded_guards(&b.guards)
+                        demanded_guards(&b.guards, env)
                     };
                     let bound = pattern_bound_vars(&b.pattern);
                     // Remove locally bound names.
@@ -226,7 +285,7 @@ fn demanded_vars(expr: &TExpr) -> HashSet<String> {
         }
 
         TExprKind::Let { binds, body } => {
-            let mut body_demanded = demanded_vars(body);
+            let mut body_demanded = demanded_vars(body, env);
             let bound_names: HashSet<String> = binds.iter()
                 .map(|b| b.name.clone())
                 .collect();
@@ -235,7 +294,7 @@ fn demanded_vars(expr: &TExpr) -> HashSet<String> {
             // demanded by that binding's definition are also demanded.
             for bind in binds {
                 if body_demanded.contains(&bind.name) {
-                    body_demanded.extend(demanded_vars(&bind.body));
+                    body_demanded.extend(demanded_vars(&bind.body, env));
                 }
             }
 
@@ -251,15 +310,30 @@ fn demanded_vars(expr: &TExpr) -> HashSet<String> {
             HashSet::new()
         }
 
-        TExprKind::SpecCall { args, .. } => {
-            // Conservative: only demand the function, not arguments.
-            // Similar to App.
-            HashSet::new()
+        TExprKind::SpecCall { original, args, .. } => {
+            // Specialized call: look up the original function's strictness.
+            let mut s = HashSet::new();
+            if let Some(callee_strict) = env.get(original.as_str()) {
+                for (i, arg) in args.iter().enumerate() {
+                    if callee_strict.get(i).copied().unwrap_or(false) {
+                        s.extend(demanded_vars(arg, env));
+                    }
+                }
+            }
+            s
         }
 
-        TExprKind::DictCall { value_args, dict_args, .. } => {
-            // Conservative: don't know the callee's strictness.
-            HashSet::new()
+        TExprKind::DictCall { func_name, value_args, .. } => {
+            // Typeclass method call: look up the method's strictness.
+            let mut s = HashSet::new();
+            if let Some(callee_strict) = env.get(func_name.as_str()) {
+                for (i, arg) in value_args.iter().enumerate() {
+                    if callee_strict.get(i).copied().unwrap_or(false) {
+                        s.extend(demanded_vars(arg, env));
+                    }
+                }
+            }
+            s
         }
 
         TExprKind::DictAccess { .. } => {

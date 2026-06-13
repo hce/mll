@@ -1352,7 +1352,8 @@ impl CodeGen {
                         if i > 0 { self.emit(", "); }
                         let is_strict = callee_strict.as_ref()
                             .map_or(false, |v| v.get(i).copied().unwrap_or(false));
-                        if Self::is_cheap_arg(a) || is_strict {
+                        let pass_eager = Self::is_cheap_arg(a) || is_strict;
+                        if pass_eager {
                             self.gen_expr(a);
                         } else {
                             self.emit("__thunk(function() return ");
