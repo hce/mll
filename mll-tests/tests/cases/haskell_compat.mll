@@ -119,7 +119,7 @@ isWeekend _   = False
 
 -- 6.2 Superclasses (Eq => Ord)
 data Priority = Low | Medium | High
-    deriving (Show, Eq)
+    deriving (Show, Eq, Ord)
 
 -- ============================================================
 -- Chapter 7: Lists
@@ -216,6 +216,7 @@ main = do
     assert (isWeekend Sat == True) "weekend sat"
     assert (isWeekend Mon == False) "weekday mon"
     assert (Low /= High) "priority neq"
+    assert (Low < High) "priority ord"
     test_lists
     test_io
     test_laziness

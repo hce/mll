@@ -94,7 +94,7 @@ MATA-LL TODO
 ## Haskell compatibility gaps
 
 - [x] Eq for [a] and Maybe a (parameterized typeclass instances)
-- [ ] deriving Ord
+- [x] deriving Ord
 - [ ] List comprehensions
 - [ ] Backtick sections (`(`div` 2)` as a function)
 - [ ] Local function definitions in do-let (`let f x = ...`)

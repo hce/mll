@@ -1324,9 +1324,10 @@ impl Checker {
         match class {
             "Show" => self.derive_show(type_name, type_vars, constructors),
             "Eq" => self.derive_eq(type_name, type_vars, constructors),
+            "Ord" => self.derive_ord(type_name, type_vars, constructors),
             other => {
                 self.push_error_ctx(
-                    TypeErrorKind::Other(format!("Cannot derive '{}' — only Show and Eq are supported", other)),
+                    TypeErrorKind::Other(format!("Cannot derive '{}' — only Show, Eq and Ord are supported", other)),
                     format!("data {}", type_name),
                 );
                 vec![]
@@ -1580,6 +1581,126 @@ impl Checker {
             specialized: false,
             dict_params: vec![],
         }]
+    }
+
+    fn derive_ord(
+        &mut self,
+        type_name: &str,
+        type_vars: &[String],
+        constructors: &[Constructor],
+    ) -> Vec<TFunction> {
+        let tvars: Vec<TyVar> = type_vars.iter()
+            .map(|n| TyVar { name: n.clone(), id: u32::MAX })
+            .collect();
+        let result_type = tvars.iter().fold(
+            Ty::Con(type_name.to_string()),
+            |acc, tv| Ty::app(acc, Ty::Var(tv.clone())),
+        );
+        let bool_ty = Ty::Con("Bool".into());
+        let fn_ty = Ty::fun(&[result_type.clone(), result_type.clone()], bool_ty.clone());
+
+        // For enums (no fields), use constructor index comparison.
+        // Constructors earlier in the declaration are "less than" later ones.
+        let is_enum = constructors.iter().all(|c| match &c.fields {
+            ConstructorFields::Positional(fs) => fs.is_empty(),
+            ConstructorFields::Named(fs) => fs.is_empty(),
+        });
+
+        let mut functions = Vec::new();
+
+        for (op, op_name) in &[("<", "lt"), (">", "gt"), ("<=", "le"), (">=", "ge")] {
+            let mangled = format!("ord_{}__{}", op_name, type_name);
+
+            let clauses = if is_enum {
+                // Enum: compare constructor indices
+                // Generate clauses for each pair, with catch-all using index comparison
+                let mut cls = Vec::new();
+                for (i, con_a) in constructors.iter().enumerate() {
+                    for (j, con_b) in constructors.iter().enumerate() {
+                        let result = match *op {
+                            "<" => i < j,
+                            ">" => i > j,
+                            "<=" => i <= j,
+                            ">=" => i >= j,
+                            _ => unreachable!(),
+                        };
+                        cls.push(TClause {
+                            patterns: vec![
+                                TPattern::Constructor { name: con_a.name.clone(), args: vec![] },
+                                TPattern::Constructor { name: con_b.name.clone(), args: vec![] },
+                            ],
+                            guards: vec![],
+                            body: TExpr::new(TExprKind::Lit(TLiteral::Bool(result)), bool_ty.clone()),
+                            where_binds: vec![],
+                        });
+                    }
+                }
+                cls
+            } else {
+                // Non-enum: for now, just compare constructor indices
+                // (field comparison would need recursive Ord instances)
+                let mut cls = Vec::new();
+                for (i, con_a) in constructors.iter().enumerate() {
+                    let field_count_a = match &con_a.fields {
+                        ConstructorFields::Positional(fs) => fs.len(),
+                        ConstructorFields::Named(fs) => fs.len(),
+                    };
+                    for (j, con_b) in constructors.iter().enumerate() {
+                        let field_count_b = match &con_b.fields {
+                            ConstructorFields::Positional(fs) => fs.len(),
+                            ConstructorFields::Named(fs) => fs.len(),
+                        };
+                        let a_args: Vec<TPattern> = (0..field_count_a)
+                            .map(|k| TPattern::Var(format!("_a{}", k), Ty::Unit))
+                            .collect();
+                        let b_args: Vec<TPattern> = (0..field_count_b)
+                            .map(|k| TPattern::Var(format!("_b{}", k), Ty::Unit))
+                            .collect();
+                        let result = match *op {
+                            "<" => i < j,
+                            ">" => i > j,
+                            "<=" => i <= j,
+                            ">=" => i >= j,
+                            _ => unreachable!(),
+                        };
+                        cls.push(TClause {
+                            patterns: vec![
+                                TPattern::Constructor { name: con_a.name.clone(), args: a_args },
+                                TPattern::Constructor { name: con_b.name.clone(), args: b_args },
+                            ],
+                            guards: vec![],
+                            body: TExpr::new(TExprKind::Lit(TLiteral::Bool(result)), bool_ty.clone()),
+                            where_binds: vec![],
+                        });
+                    }
+                }
+                cls
+            };
+
+            functions.push(TFunction {
+                name: mangled.clone(),
+                ty: fn_ty.clone(),
+                clauses,
+                specialized: false,
+                dict_params: vec![],
+            });
+        }
+
+        // Register the Ord instance
+        let mut method_fns = HashMap::new();
+        for (op, op_name) in &[("<", "lt"), (">", "gt"), ("<=", "le"), (">=", "ge")] {
+            method_fns.insert(op.to_string(), format!("ord_{}__{}", op_name, type_name));
+        }
+        self.instances.insert(
+            ("Ord".to_string(), type_name.to_string()),
+            InstanceInfo {
+                class_name: "Ord".to_string(),
+                target_type: result_type,
+                method_fns,
+            },
+        );
+
+        functions
     }
 
     // --- Exhaustiveness checking ---
