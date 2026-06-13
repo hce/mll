@@ -2190,6 +2190,10 @@ impl Checker {
         let specialized = match ffi_kind {
             FfiKind::Iterator => format!("__mll_iter:{}", lua_name),
             FfiKind::Try => format!("__mll_try:{}", lua_name),
+            FfiKind::IO if tuple_arity.is_some() => {
+                format!("__mll_io_tup:{}:{}", tuple_arity.unwrap(), lua_name)
+            }
+            FfiKind::IO => format!("__mll_io:{}", lua_name),
             _ if tuple_arity.is_some() => {
                 format!("__mll_tup_ret:{}:{}", tuple_arity.unwrap(), lua_name)
             }

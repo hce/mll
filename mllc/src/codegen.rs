@@ -96,7 +96,7 @@ impl CodeGen {
         // Seed concrete_vars so references skip __force throughout user code.
         for name in &[
             "__force", "__thunk", "__mll_cons", "__mll_lazy_cons", "__mll_head",
-            "__mll_tail", "__mll_to_lua", "__mll_wrap_callback", "__mll_run",
+            "__mll_tail", "__mll_to_lua", "__mll_wrap_callback", "__mll_run", "__mll_perform",
             "not_", "engage", "liftIO", "show", "error_", "max", "min", "undefined",
             "pure", "return_", "Just",
             "show_Integer", "show_Number", "show_String", "show_Bool",
@@ -217,7 +217,7 @@ impl CodeGen {
             self.emit_line("");
             self.emit_line("-- Entry point (skip when loaded via require)");
             self.emit_line("local __mll_modname = ...");
-            self.emit_line("if __mll_modname == nil then __run() end");
+            self.emit_line("if __mll_modname == nil then __mll_perform(__run()) end");
         }
 
         // Generate module return table for exports
@@ -238,7 +238,11 @@ impl CodeGen {
                 self.emit_indent();
                 self.emit("for i = 1, args.n do if type(args[i]) == \"function\" then args[i] = __mll_wrap_callback(args[i]) end end\n");
                 self.emit_indent();
-                self.emit(&format!("return __mll_to_lua({sname}(__unpack(args, 1, args.n)))\n"));
+                self.emit(&format!("local __result = {sname}(__unpack(args, 1, args.n))\n"));
+                self.emit_indent();
+                self.emit("if type(__result) == \"function\" then __result = __result() end\n");
+                self.emit_indent();
+                self.emit("return __mll_to_lua(__result)\n");
                 self.indent -= 1;
                 self.emit_indent();
                 self.emit("end,\n");
@@ -397,9 +401,16 @@ impl CodeGen {
                     self.emit(")(");
                     self.emit(&eta_params.join(", "));
                     self.emit(")\n");
+                } else if Self::is_nullary_action_type(&func.ty) || Self::returns_action(&func.ty) {
+                    // IO/ST-returning function: body produces an action closure.
+                    // Use gen_bind_chain_io to flatten bind chains inside
+                    // the action, performing sub-actions and returning the final result.
+                    self.emit_indent(); self.emit("return ");
+                    self.gen_expr(&clause.body);
+                    self.emit("\n");
                 } else {
-                    // Use gen_bind_chain for the body so If/>>=/>> flatten
-                    // into statements instead of IIFEs
+                    // Pure function: use gen_bind_chain for the body so
+                    // If/>>=/>> flatten into statements instead of IIFEs
                     self.gen_bind_chain(&clause.body);
                 }
             } else {
@@ -1031,13 +1042,23 @@ impl CodeGen {
     /// Bare Var references to zero-arg IO/ST bindings are deferred functions
     /// in Lua and need () to execute. Everything else self-evaluates.
     fn gen_action(&mut self, expr: &TExpr) {
-        self.gen_expr(expr);
-        // A bare Var with a monadic type (no arrows) is a zero-arg IO/ST
-        // binding — codegen wraps those in function() ... end, so call it.
-        if let TExprKind::Var(_) = &expr.kind {
-            if Self::is_nullary_action_type(&expr.ty) {
-                self.emit("()");
+        // IO/ST actions are function() closures — call to perform them.
+        // Use __force first (action may be a thunk), then () to perform.
+        // Literals and unit values are not actions.
+        if Self::is_nullary_action_type(&expr.ty) {
+            match &expr.kind {
+                TExprKind::Lit(_) | TExprKind::Con(_) | TExprKind::Tuple(_) => {
+                    // Not an action — emit as-is (e.g., return () or a literal)
+                    self.gen_expr(expr);
+                }
+                _ => {
+                    self.emit("__force(");
+                    self.gen_expr(expr);
+                    self.emit(")()");
+                }
             }
+        } else {
+            self.gen_expr(expr);
         }
     }
 
@@ -1047,10 +1068,28 @@ impl CodeGen {
                 Ty::App(c, _) if matches!(c.as_ref(), Ty::Con(n) if n == "ST")))
     }
 
+    /// Check if a function type's return type is an IO/ST action.
+    fn returns_action(ty: &Ty) -> bool {
+        match ty {
+            Ty::Arrow(_, ret) => Self::returns_action(ret),
+            _ => Self::is_nullary_action_type(ty),
+        }
+    }
+
     /// Flatten a monadic bind chain (from do-notation) into sequential
-    /// local statements. Called inside an IIFE context.
-    /// Handles: >>= with lambda, >>, let bindings.
+    /// local statements.
+    /// When `inside_action` is true, terminal IO expressions are performed
+    /// (called with `()`) because we're inside a do-block action closure.
+    /// When false (regular function body), IO actions are returned as-is.
     fn gen_bind_chain(&mut self, expr: &TExpr) {
+        self.gen_bind_chain_inner(expr, false);
+    }
+
+    fn gen_bind_chain_io(&mut self, expr: &TExpr) {
+        self.gen_bind_chain_inner(expr, true);
+    }
+
+    fn gen_bind_chain_inner(&mut self, expr: &TExpr, inside_action: bool) {
         match &expr.kind {
             TExprKind::InfixApp { op, lhs, rhs } if op == ">>=" => {
                 if let TExprKind::Lambda { params, body } = &rhs.kind {
@@ -1061,7 +1100,7 @@ impl CodeGen {
                     self.gen_action(lhs);
                     self.emit("\n");
                     self.concrete_vars.insert(param_name);
-                    self.gen_bind_chain(body);
+                    self.gen_bind_chain_inner(body, true);
                     return;
                 }
             }
@@ -1072,7 +1111,7 @@ impl CodeGen {
                 self.emit_indent();
                 self.gen_action(lhs_unwrapped);
                 self.emit("\n");
-                self.gen_bind_chain(rhs);
+                self.gen_bind_chain_inner(rhs, true);
                 return;
             }
             TExprKind::Let { binds, body } => {
@@ -1108,7 +1147,7 @@ impl CodeGen {
                         }
                     }
                 }
-                self.gen_bind_chain(body);
+                self.gen_bind_chain_inner(body, inside_action);
                 return;
             }
             _ => {}
@@ -1124,12 +1163,12 @@ impl CodeGen {
                 self.gen_expr(cond);
                 self.emit(" then\n");
                 self.indent += 1;
-                self.gen_bind_chain(then_branch);
+                self.gen_bind_chain_inner(then_branch, inside_action);
                 self.indent -= 1;
                 self.emit_indent();
                 self.emit("else\n");
                 self.indent += 1;
-                self.gen_bind_chain(else_branch);
+                self.gen_bind_chain_inner(else_branch, inside_action);
                 self.indent -= 1;
                 self.emit_indent();
                 self.emit("end\n");
@@ -1137,7 +1176,11 @@ impl CodeGen {
             _ => {
                 self.emit_indent();
                 self.emit("return ");
-                self.gen_expr(expr);
+                if inside_action {
+                    self.gen_action(expr);
+                } else {
+                    self.gen_expr(expr);
+                }
                 self.emit("\n");
             }
         }
@@ -1246,15 +1289,12 @@ impl CodeGen {
                 // when f could be an arbitrary expensive function.
                 // Calls to known top-level/prelude functions are safe to
                 // evaluate eagerly.
+                // return/pure wrap their argument in an IO action closure.
                 if let TExprKind::Var(name) = &func.kind {
                     if name == "return" || name == "pure" {
-                        if self.has_unknown_call(arg) {
-                            self.emit("__thunk(function() return ");
-                            self.gen_expr(arg);
-                            self.emit(" end)");
-                        } else {
-                            self.gen_expr(arg);
-                        }
+                        self.emit("(function() return ");
+                        self.gen_expr(arg);
+                        self.emit(" end)");
                         return;
                     }
                 }
@@ -1389,27 +1429,29 @@ impl CodeGen {
                         return;
                     }
                     ">>=" => {
-                        // Flatten monadic bind chains into sequential locals
-                        // in a single IIFE — eliminates nested closures from do-notation
+                        // IO actions: do-blocks produce function() closures.
+                        // Bind chain flattens into sequential statements inside
+                        // the action closure; each sub-action is called with ().
                         if let TExprKind::Lambda { .. } = &rhs.kind {
-                            self.emit("(function()\n");
+                            self.emit("function()\n");
                             self.indent += 1;
-                            self.gen_bind_chain(expr);
+                            self.gen_bind_chain_io(expr);
                             self.indent -= 1;
-                            self.emit_indent(); self.emit("end)()");
+                            self.emit_indent(); self.emit("end");
                         } else {
-                            self.emit("("); self.gen_expr(rhs); self.emit(")(");
-                            self.emit("__mll_run("); self.gen_expr(lhs); self.emit("))");
+                            // m >>= f (non-lambda): wrap as action
+                            self.emit("function() return ("); self.gen_expr(rhs); self.emit(")(");
+                            self.gen_action(lhs); self.emit(")() end");
                         }
                         return;
                     }
                     ">>" => {
-                        // Flatten IO-then chains too
-                        self.emit("(function()\n");
+                        // IO-then: produce action closure
+                        self.emit("function()\n");
                         self.indent += 1;
-                        self.gen_bind_chain(expr);
+                        self.gen_bind_chain_io(expr);
                         self.indent -= 1;
-                        self.emit_indent(); self.emit("end)()");
+                        self.emit_indent(); self.emit("end");
                         return;
                     }
                     "." => {
@@ -1618,8 +1660,57 @@ impl CodeGen {
                         self.emit(")");
                     }
                     self.emit(")");
+                } else if let Some(lua_func) = specialized.strip_prefix("__mll_io:") {
+                    // IO FFI: wrap in action thunk — only performed by >>= / >>
+                    self.emit("function() return ");
+                    if lua_func.starts_with(':') {
+                        // Method call IO: handle:method(args)
+                        let method = &lua_func[1..];
+                        self.emit("__force(");
+                        self.gen_expr(&args[0]);
+                        self.emit(&format!("):{}", method));
+                        self.emit("(");
+                        for (i, a) in args.iter().enumerate().skip(1) {
+                            if i > 1 { self.emit(", "); }
+                            self.emit("__force(");
+                            self.gen_expr(a);
+                            self.emit(")");
+                        }
+                        self.emit(")");
+                    } else {
+                        self.emit(lua_func);
+                        self.emit("(");
+                        for (i, a) in args.iter().enumerate() {
+                            if i > 0 { self.emit(", "); }
+                            self.emit("__force(");
+                            self.gen_expr(a);
+                            self.emit(")");
+                        }
+                        self.emit(")");
+                    }
+                    self.emit(" end");
+                } else if let Some(rest) = specialized.strip_prefix("__mll_io_tup:") {
+                    // IO FFI with multi-return: wrap in action thunk
+                    let parts: Vec<&str> = rest.splitn(2, ':').collect();
+                    let n: usize = parts[0].parse().unwrap();
+                    let lua_func = parts[1];
+                    let vars: Vec<String> = (0..n).map(|i| format!("_r{}", i)).collect();
+                    self.emit("function() local ");
+                    self.emit(&vars.join(", "));
+                    self.emit(" = ");
+                    self.emit(lua_func);
+                    self.emit("(");
+                    for (i, a) in args.iter().enumerate() {
+                        if i > 0 { self.emit(", "); }
+                        self.emit("__force(");
+                        self.gen_expr(a);
+                        self.emit(")");
+                    }
+                    self.emit("); return {");
+                    self.emit(&vars.join(", "));
+                    self.emit("} end");
                 } else {
-                    // Regular FFI: lua_func(arg0, arg1, ...)
+                    // Regular (pure) FFI: lua_func(arg0, arg1, ...)
                     self.emit(specialized);
                     self.emit("(");
                     for (i, a) in args.iter().enumerate() {
@@ -1926,10 +2017,15 @@ local function __mll_wrap_callback(f)
     end
 end
 
--- Run an IO action: if it's a thunk (function), force it; otherwise return as-is
+-- Run an IO action: force thunks, then call the action closure
 local function __mll_run(action)
     action = __force(action)
     if type(action) == "function" then return action() else return action end
+end
+-- Perform an IO action (guaranteed to be a function closure)
+local function __mll_perform(action)
+    action = __force(action)
+    return action()
 end
 
 -- Primitives that require Lua runtime dispatch
@@ -1967,8 +2063,8 @@ local undefined = __thunk(function() error("Prelude.undefined", 0) end)
 local function error_(msg) error(__force(msg)) end
 local function max(a, b) return math.max(__force(a), __force(b)) end
 local function min(a, b) return math.min(__force(a), __force(b)) end
-local function pure(x) return x end
-local function return_(x) return x end
+local function pure(x) return function() return x end end
+local function return_(x) return function() return x end end
 local function Just(x) return x end
 local Nothing = nil
 local function show_Integer(x) return show(x) end
@@ -2075,7 +2171,7 @@ local function __mll_iter(factory, ...)
     return go()
 end
 
-local function getArgs()
+local getArgs = function()
     local result = nil
     if arg then
         for i = #arg, 1, -1 do result = __mll_cons(arg[i], result) end
@@ -2083,7 +2179,9 @@ local function getArgs()
     return result
 end
 local function exit_(code)
-    if code == 1 then os.exit(0) else os.exit(code[2]) end
+    return function()
+        if code == 1 then os.exit(0) else os.exit(code[2]) end
+    end
 end
 
 -- Bitwise operations (Lua 5.3+ native, LuaJIT bit.*, or bit32)
@@ -2201,24 +2299,32 @@ local function eq_ByteString(a, b) return __force(a) == __force(b) end
 -- Operations are effectful and run inside LuaIO s.
 -- 0-based indexing externally, 1-based internally.
 local function __mll_ma_new(size, init)
-    size = __force(size); init = __force(init)
-    local t = {}; for i = 1, size do t[i] = init end; return t
+    return function()
+        size = __force(size); init = __force(init)
+        local t = {}; for i = 1, size do t[i] = init end; return t
+    end
 end
-local function __mll_ma_read(arr, idx) return __force(arr)[__force(idx) + 1] end
-local function __mll_ma_write(arr, idx, val) __force(arr)[__force(idx) + 1] = __force(val) end
+local function __mll_ma_read(arr, idx) return function() return __force(arr)[__force(idx) + 1] end end
+local function __mll_ma_write(arr, idx, val) return function() __force(arr)[__force(idx) + 1] = __force(val) end end
 local function __mll_ma_modify(arr, idx, f)
-    arr = __force(arr); idx = __force(idx) + 1; f = __force(f)
-    arr[idx] = __force(f)(arr[idx])
+    return function()
+        arr = __force(arr); idx = __force(idx) + 1; f = __force(f)
+        arr[idx] = __force(f)(arr[idx])
+    end
 end
-local function __mll_ma_length(arr) return #__force(arr) end
+local function __mll_ma_length(arr) return function() return #__force(arr) end end
 local function __mll_ma_from_list(xs)
-    xs = __force(xs); local t = {}; local cur = xs
-    while cur ~= nil do t[#t+1] = __force(__mll_head(cur)); cur = __mll_tail(cur) end
-    return t
+    return function()
+        xs = __force(xs); local t = {}; local cur = xs
+        while cur ~= nil do t[#t+1] = __force(__mll_head(cur)); cur = __mll_tail(cur) end
+        return t
+    end
 end
 local function __mll_ma_to_list(arr)
-    arr = __force(arr); local r = nil
-    for i = #arr, 1, -1 do r = __mll_cons(arr[i], r) end
-    return r
+    return function()
+        arr = __force(arr); local r = nil
+        for i = #arr, 1, -1 do r = __mll_cons(arr[i], r) end
+        return r
+    end
 end
 "#;
