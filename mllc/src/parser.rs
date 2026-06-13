@@ -93,6 +93,34 @@ impl Parser {
         let mut decls = Vec::new();
         self.skip_indent();
 
+        // Skip optional `module Name where` header
+        if self.at(&Token::KwModule) {
+            self.advance();
+            // Skip module name (may be dotted: Data.List)
+            while matches!(self.peek(), Token::UpperIdent(_) | Token::Ident(_)) {
+                self.advance();
+                if self.at(&Token::Operator(".".to_string())) {
+                    self.advance();
+                }
+            }
+            // Skip optional export list in parens
+            if self.at(&Token::LeftParen) {
+                let mut depth = 1;
+                self.advance();
+                while depth > 0 && !self.at_eof() {
+                    match self.peek() {
+                        Token::LeftParen => { depth += 1; self.advance(); }
+                        Token::RightParen => { depth -= 1; self.advance(); }
+                        _ => { self.advance(); }
+                    }
+                }
+            }
+            if self.at(&Token::Where) {
+                self.advance();
+            }
+            self.skip_newlines_and_indent();
+        }
+
         while !self.at_eof() {
             let decl = self.parse_decl()?;
             decls.extend(decl);
@@ -552,6 +580,22 @@ impl Parser {
     ///            ...
     fn parse_type_family_decl(&mut self) -> Result<Vec<Decl>, String> {
         self.expect(&Token::KwType)?;
+
+        // Plain type alias: `type Name a b = ...`
+        if !self.at(&Token::Family) {
+            let name = self.expect_upper_ident()?;
+            let mut params = Vec::new();
+            while matches!(self.peek(), Token::Ident(_)) {
+                if let Token::Ident(p) = self.peek().clone() {
+                    params.push(p);
+                    self.advance();
+                }
+            }
+            self.expect(&Token::Eq)?;
+            let ty = self.parse_type()?;
+            return Ok(vec![Decl::TypeAlias { name, params, ty }]);
+        }
+
         self.expect(&Token::Family)?;
         let name = self.expect_upper_ident()?;
 

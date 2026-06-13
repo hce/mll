@@ -91,6 +91,8 @@ pub struct Checker {
     pub record_fields: HashMap<String, (String, usize)>,
     /// User-defined type families: name -> equations
     type_families: HashMap<String, Vec<TypeFamilyEq>>,
+    /// Type aliases: name -> (params, expanded type)
+    type_aliases: HashMap<String, (Vec<String>, Type)>,
     /// Kind table: type constructor name -> kind
     kinds: HashMap<String, Kind>,
     /// Classes defined in the local module (for orphan detection)
@@ -115,6 +117,7 @@ impl Checker {
             instances: HashMap::new(),
             record_fields: HashMap::new(),
             type_families: HashMap::new(),
+            type_aliases: HashMap::new(),
             kinds: HashMap::new(),
             local_classes: HashSet::new(),
             local_types: HashSet::new(),
@@ -158,12 +161,28 @@ impl Checker {
 
     fn ast_type_to_ty(&mut self, ast_ty: &Type) -> Ty {
         match ast_ty {
-            Type::Con(name) => Ty::Con(name.clone()),
+            Type::Con(name) => {
+                // Check for type alias expansion
+                if let Some((params, alias_ty)) = self.type_aliases.get(name).cloned() {
+                    if params.is_empty() {
+                        if name == "Int" {
+                            eprintln!("Warning: Int is treated as Integer (Lua has no fixed-width integers)");
+                        }
+                        return self.ast_type_to_ty(&alias_ty);
+                    }
+                    // Parameterized alias used without args — treat as constructor
+                }
+                Ty::Con(name.clone())
+            }
             Type::Var(name) => Ty::Var(TyVar { name: name.clone(), id: u32::MAX }),
             Type::Arrow(a, b) => Ty::arrow(self.ast_type_to_ty(a), self.ast_type_to_ty(b)),
             Type::App(f, a) => {
                 // Check for type family reduction: FamilyName arg1 arg2 ...
                 if let Some(result) = self.try_reduce_type_family(ast_ty) {
+                    return result;
+                }
+                // Check for type alias expansion: AliasName arg1 arg2 ...
+                if let Some(result) = self.try_expand_type_alias(ast_ty) {
                     return result;
                 }
                 Ty::app(self.ast_type_to_ty(f), self.ast_type_to_ty(a))
@@ -243,6 +262,31 @@ impl Checker {
         }
 
         None
+    }
+
+    /// Expand a type alias application: `AliasName arg1 arg2` → substituted body.
+    fn try_expand_type_alias(&mut self, ty: &Type) -> Option<Ty> {
+        let mut args = Vec::new();
+        let mut head = ty;
+        loop {
+            match head {
+                Type::App(f, a) => { args.push(a.as_ref()); head = f.as_ref(); }
+                _ => break,
+            }
+        }
+        args.reverse();
+        let alias_name = match head {
+            Type::Con(name) => name.clone(),
+            _ => return None,
+        };
+        let (params, alias_body) = self.type_aliases.get(&alias_name)?.clone();
+        if params.len() != args.len() { return None; }
+        let mut bindings: HashMap<String, &Type> = HashMap::new();
+        for (param, arg) in params.iter().zip(args.iter()) {
+            bindings.insert(param.clone(), arg);
+        }
+        let expanded = self.substitute_type(&alias_body, &bindings);
+        Some(self.ast_type_to_ty(&expanded))
     }
 
     /// Match a type pattern against an actual type, collecting variable bindings.
@@ -746,6 +790,10 @@ impl Checker {
                 },
             },
         );
+
+        // Int as alias for Integer (Lua has no fixed-width integers)
+        self.type_aliases.insert("Int".to_string(),
+            (vec![], Type::Con("Integer".to_string())));
     }
 
     /// Get the kind of a type constructor, or infer Type for unknowns.
@@ -969,6 +1017,9 @@ impl Checker {
                 }
                 Decl::TypeFamily { name, equations } => {
                     self.type_families.insert(name.clone(), equations.clone());
+                }
+                Decl::TypeAlias { name, params, ty } => {
+                    self.type_aliases.insert(name.clone(), (params.clone(), ty.clone()));
                 }
                 _ => {}
             }

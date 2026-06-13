@@ -77,6 +77,12 @@ pub enum Decl {
         module_path: Vec<String>,
         items: ImportItems,
     },
+    /// Type alias: `type String = [Char]`
+    TypeAlias {
+        name: String,
+        params: Vec<String>,
+        ty: Type,
+    },
     /// Fixity declaration: `infixl 6 +` or `infixr 5 :`
     FixityDecl {
         assoc: Assoc,

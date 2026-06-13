@@ -3,6 +3,7 @@
 
 -- FFI primitives
 putStrLn :: String -> LuaIO "print" ()
+putStr :: String -> LuaIO "io.write" ()
 sqrt :: Number -> LuaPure "math.sqrt" Number
 
 -- Process control

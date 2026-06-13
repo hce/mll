@@ -179,5 +179,6 @@ fn decl_name(decl: &Decl) -> Option<String> {
         Decl::TypeFamily { name, .. } => Some(name.clone()),
         Decl::Import { .. } => None,
         Decl::FixityDecl { .. } => None,
+        Decl::TypeAlias { name, .. } => Some(name.clone()),
     }
 }
