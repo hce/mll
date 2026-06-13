@@ -737,17 +737,14 @@ impl Parser {
                 guards.push(Guard { condition, body });
                 self.skip_newlines_and_indent();
             }
-            return Ok(Clause {
-                patterns,
-                guards,
-                body: Expr::Var("undefined".to_string()),
-                where_binds: vec![],
-                span,
-            });
         }
 
-        self.expect(&Token::Eq)?;
-        let body = self.parse_expr()?;
+        let body = if guards.is_empty() {
+            self.expect(&Token::Eq)?;
+            self.parse_expr()?
+        } else {
+            Expr::Var("undefined".to_string())
+        };
 
         // where clause
         let where_binds = self.parse_where()?;
@@ -1464,13 +1461,39 @@ impl Parser {
                         break;
                     }
 
-                    // Check for `let name = expr`
+                    // Check for `let name = expr` (possibly multiple bindings)
                     if self.at(&Token::Let) {
                         self.advance();
+                        let let_indent = self.current_indent;
                         let name = self.expect_ident()?;
                         self.expect(&Token::Eq)?;
                         let expr = self.parse_expr()?;
                         stmts.push(DoStmt::DoLet { name, expr });
+                        // Continue parsing additional bindings at the same or deeper indent
+                        loop {
+                            let save_pos = self.pos;
+                            let save_indent = self.current_indent;
+                            self.skip_newlines_and_indent();
+                            if self.current_indent >= let_indent {
+                                if let Token::Ident(_) = self.peek() {
+                                    // Peek ahead for `name =`
+                                    let save2 = self.pos;
+                                    let name2 = self.expect_ident().ok();
+                                    if name2.is_some() && self.at(&Token::Eq) {
+                                        self.advance(); // consume =
+                                        let expr2 = self.parse_expr()?;
+                                        stmts.push(DoStmt::DoLet { name: name2.unwrap(), expr: expr2 });
+                                        continue;
+                                    }
+                                    self.pos = save2;
+                                    self.current_indent = save_indent;
+                                }
+                            }
+                            // Not a continuation binding — backtrack
+                            self.pos = save_pos;
+                            self.current_indent = save_indent;
+                            break;
+                        }
                         continue;
                     }
 

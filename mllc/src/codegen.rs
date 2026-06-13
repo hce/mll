@@ -571,6 +571,7 @@ impl CodeGen {
                     for (var, val) in &bindings {
                         self.emit_line(&format!("local {} = {}", var, val));
                     }
+                    self.gen_where_binds(&clause.where_binds);
                     for (gi, guard) in clause.guards.iter().enumerate() {
                         let gkw = if gi == 0 { "if" } else { "elseif" };
                         self.emit_indent(); self.emit(&format!("{} ", gkw));
@@ -591,6 +592,7 @@ impl CodeGen {
                     for (var, val) in &bindings {
                         self.emit_line(&format!("local {} = {}", var, val));
                     }
+                    self.gen_where_binds(&clause.where_binds);
                     for (gi, guard) in clause.guards.iter().enumerate() {
                         let gkw = if i == 0 && gi == 0 { "if" } else { "elseif" };
                         self.emit_indent(); self.emit(&format!("{} ", gkw));
