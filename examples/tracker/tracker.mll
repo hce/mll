@@ -18,6 +18,10 @@ appI :: [Integer] -> [Integer] -> [Integer]
 appI [] ys = ys
 appI (x:xs) ys = x : appI xs ys
 
+-- ========== Module Info (parsed once, threaded read-only) ==========
+
+data ModInfo = ModInfo { miFd :: ByteString, miOrdNum :: Integer, miSpeed :: Integer, miTempo :: Integer, miNumCh :: Integer, miNumSmp :: Integer }
+
 -- ========== Header ==========
 
 hdrOrdNum :: ByteString -> Integer
@@ -184,23 +188,23 @@ initChans fd n i =
 
 -- Returns (masks, (lv, (nextOff, jump)))
 -- jump: -1 = no jump, >= 0 = Bxx position jump, -2 = Cxx pattern break
-decodeRow :: ByteString -> Integer -> STArray s -> ByteString
-    -> ByteString -> Integer -> Integer
+decodeRow :: ModInfo -> Integer -> STArray s -> ByteString
+    -> ByteString
     -> ST s (ByteString, (ByteString, (Integer, Integer)))
-decodeRow fd off arr masks lv numCh numSmp =
-    decRowLoop fd off arr masks lv numCh numSmp (0 - 1)
+decodeRow mi off arr masks lv =
+    decRowLoop mi off arr masks lv (0 - 1)
 
-decRowLoop :: ByteString -> Integer -> STArray s -> ByteString
-    -> ByteString -> Integer -> Integer -> Integer
+decRowLoop :: ModInfo -> Integer -> STArray s -> ByteString
+    -> ByteString -> Integer
     -> ST s (ByteString, (ByteString, (Integer, Integer)))
-decRowLoop fd off arr masks lv numCh numSmp jump =
-    let marker = bsIndex fd off
+decRowLoop mi off arr masks lv jump =
+    let marker = bsIndex mi.miFd off
     in if marker == 0
        then return (masks, (lv, (off + 1, jump)))
        else let ch   = (marker - 1) `mod` 64
                 hmb  = marker `div` 128
                 off2 = off + 1
-                mask = if hmb == 1 then bsIndex fd off2 else bsIndex masks ch
+                mask = if hmb == 1 then bsIndex mi.miFd off2 else bsIndex masks ch
                 msk2 = if hmb == 1 then bsSetByte masks ch mask else masks
                 off3 = if hmb == 1 then off2 + 1 else off2
                 b0 = mask `mod` 2
@@ -210,14 +214,14 @@ decRowLoop fd off arr masks lv numCh numSmp jump =
                 b4 = (mask `div` 16) `mod` 2
                 b5 = (mask `div` 32) `mod` 2
                 b6 = (mask `div` 64) `mod` 2
-                note = if b0 == 1 then bsIndex fd off3 else if b4 == 1 then bsIndex lv (ch * 4) else 255
+                note = if b0 == 1 then bsIndex mi.miFd off3 else if b4 == 1 then bsIndex lv (ch * 4) else 255
                 off4 = off3 + b0
-                ins  = if b1 == 1 then bsIndex fd off4 else if b5 == 1 then bsIndex lv (ch * 4 + 1) else 0
+                ins  = if b1 == 1 then bsIndex mi.miFd off4 else if b5 == 1 then bsIndex lv (ch * 4 + 1) else 0
                 off5 = off4 + b1
-                vol  = if b2 == 1 then bsIndex fd off5 else if b6 == 1 then bsIndex lv (ch * 4 + 2) else 255
+                vol  = if b2 == 1 then bsIndex mi.miFd off5 else if b6 == 1 then bsIndex lv (ch * 4 + 2) else 255
                 off6 = off5 + b2
-                cmd    = if b3 == 1 then bsIndex fd off6 else 0
-                cmdVal = if b3 == 1 then bsIndex fd (off6 + 1) else 0
+                cmd    = if b3 == 1 then bsIndex mi.miFd off6 else 0
+                cmdVal = if b3 == 1 then bsIndex mi.miFd (off6 + 1) else 0
                 off7 = off6 + (if b3 == 1 then 2 else 0)
                 lv2 = if b0 == 1 then bsSetByte lv  (ch * 4)     note else lv
                 lv3 = if b1 == 1 then bsSetByte lv2 (ch * 4 + 1) ins  else lv2
@@ -225,17 +229,17 @@ decRowLoop fd off arr masks lv numCh numSmp jump =
                 jump2 = if cmd == 2 then cmdVal
                          else if cmd == 3 then 0 - 2
                          else jump
-            in trigNote fd arr ch note ins vol cmd cmdVal numSmp
-                >> decRowLoop fd off7 arr msk2 lv4 numCh numSmp jump2
+            in trigNote mi arr ch note ins vol cmd cmdVal
+                >> decRowLoop mi off7 arr msk2 lv4 jump2
 
-trigNote :: ByteString -> STArray s -> Integer -> Integer
+trigNote :: ModInfo -> STArray s -> Integer -> Integer
     -> Integer -> Integer -> Integer -> Integer
-    -> Integer -> ST s ()
-trigNote fd arr ch note ins vol cmd cmdVal numSmp =
+    -> ST s ()
+trigNote mi arr ch note ins vol cmd cmdVal =
     if note == 254
     then writeSTArray arr (fi ch fiAct) 0
     else do
-        if ins > 0 && ins <= numSmp then loadSmp fd arr ch ins else return ()
+        if ins > 0 && ins <= mi.miNumSmp then loadSmp mi arr ch ins else return ()
         if note < 120 then setNoteFreq arr ch note else return ()
         applyVol arr ch vol
         applyEffect arr ch cmd cmdVal
@@ -262,17 +266,17 @@ setNoteFreq arr ch note = do
     writeSTArray arr (fi ch fiInc) inc
     writeSTArray arr (fi ch fiAct) 1
 
-loadSmp :: ByteString -> STArray s -> Integer -> Integer -> ST s ()
-loadSmp fd arr ch sn =
-    let off = smpOffset fd (sn - 1)
-        sl  = smpLen fd off
-        lb  = smpLoopBegin fd off
-        le  = smpLoopEnd fd off
-        c5  = smpC5Freq fd off
-        dp  = smpDataPtr fd off
-        dv  = smpDefaultVol fd off
-        gv  = smpGlobalVol fd off
-        fl  = smpFlags fd off
+loadSmp :: ModInfo -> STArray s -> Integer -> Integer -> ST s ()
+loadSmp mi arr ch sn =
+    let off = smpOffset mi.miFd (sn - 1)
+        sl  = smpLen mi.miFd off
+        lb  = smpLoopBegin mi.miFd off
+        le  = smpLoopEnd mi.miFd off
+        c5  = smpC5Freq mi.miFd off
+        dp  = smpDataPtr mi.miFd off
+        dv  = smpDefaultVol mi.miFd off
+        gv  = smpGlobalVol mi.miFd off
+        fl  = smpFlags mi.miFd off
         hl  = if smpHasLoop fl then 1 else 0
         b16 = if smpIs16Bit fl then 1 else 0
     in do
@@ -289,33 +293,33 @@ loadSmp fd arr ch sn =
 
 -- ========== Mixing (ST monad — same STArray as decoding) ==========
 
-mixTick :: ByteString -> STArray s -> Integer -> Integer
+mixTick :: ModInfo -> STArray s -> Integer
     -> [ByteString] -> ST s [ByteString]
-mixTick fd arr spt numCh chunks = do
-    pcm <- mixFrames fd arr spt numCh []
+mixTick mi arr spt chunks = do
+    pcm <- mixFrames mi arr spt []
     return (pcm : chunks)
 
-mixFrames :: ByteString -> STArray s -> Integer -> Integer
+mixFrames :: ModInfo -> STArray s -> Integer
     -> [ByteString] -> ST s ByteString
-mixFrames fd arr 0 _ acc = return (bsConcatList (reverse acc))
-mixFrames fd arr n numCh acc = do
-    frame <- mixFrame fd arr numCh 0 0 0
+mixFrames mi arr 0 acc = return (bsConcatList (reverse acc))
+mixFrames mi arr n acc = do
+    frame <- mixFrame mi arr 0 0 0
     let l   = fst frame
     let r   = snd frame
     let ml  = (l * 48) `div` (128 * 3)
     let mr  = (r * 48) `div` (128 * 3)
     let pcm = bsConcat (bsPutI16LE (clamp (0 - 32768) 32767 ml)) (bsPutI16LE (clamp (0 - 32768) 32767 mr))
-    mixFrames fd arr (n - 1) numCh (pcm : acc)
+    mixFrames mi arr (n - 1) (pcm : acc)
 
-mixFrame :: ByteString -> STArray s -> Integer -> Integer
+mixFrame :: ModInfo -> STArray s -> Integer
     -> Integer -> Integer -> ST s (Integer, Integer)
-mixFrame fd arr numCh ch la ra =
-    if ch >= numCh
+mixFrame mi arr ch la ra =
+    if ch >= mi.miNumCh
     then return (la, ra)
     else do
         act <- readSTArray arr (fi ch fiAct)
         if act == 0
-        then mixFrame fd arr numCh (ch + 1) la ra
+        then mixFrame mi arr (ch + 1) la ra
         else do
             pos  <- readSTArray arr (fi ch fiPos)
             sl   <- readSTArray arr (fi ch fiLen)
@@ -325,12 +329,12 @@ mixFrame fd arr numCh ch la ra =
             is16 <- readSTArray arr (fi ch fi16)
             gvl  <- readSTArray arr (fi ch fiGVl)
             let smpPos = pos `div` 256
-            let smp = if smpPos < sl then readSmp fd dp smpPos (is16 == 1) else 0
+            let smp = if smpPos < sl then readSmp mi.miFd dp smpPos (is16 == 1) else 0
             let sv  = if is16 == 1 then (smp * vol * gvl * 128) `div` (64 * 64 * 128) else (smp * vol * gvl * 128 * 256) `div` (64 * 64 * 128)
             let nl = la + (sv * (64 - pan)) `div` 64
             let nr = ra + (sv * pan) `div` 64
             advPos arr ch
-            mixFrame fd arr numCh (ch + 1) nl nr
+            mixFrame mi arr (ch + 1) nl nr
 
 advPos :: STArray s -> Integer -> ST s ()
 advPos arr ch = do
@@ -352,54 +356,53 @@ advPos arr ch = do
 
 -- ========== Inner loop: decode + mix one pattern (pure, inside runST) ==========
 
-doTicks :: ByteString -> STArray s -> Integer -> Integer -> Integer
+doTicks :: ModInfo -> STArray s -> Integer
     -> [ByteString] -> ST s [ByteString]
-doTicks fd arr speed spt numCh chunks =
-    doTickLoop fd arr speed spt numCh 0 chunks
+doTicks mi arr spt chunks =
+    doTickLoop mi arr spt 0 chunks
 
-doTickLoop :: ByteString -> STArray s -> Integer -> Integer -> Integer
+doTickLoop :: ModInfo -> STArray s -> Integer
     -> Integer -> [ByteString] -> ST s [ByteString]
-doTickLoop fd arr speed spt numCh tick chunks =
-    if tick >= speed
+doTickLoop mi arr spt tick chunks =
+    if tick >= mi.miSpeed
     then return chunks
     else do
-        chunks2 <- mixTick fd arr spt numCh chunks
-        doTickLoop fd arr speed spt numCh (tick + 1) chunks2
+        chunks2 <- mixTick mi arr spt chunks
+        doTickLoop mi arr spt (tick + 1) chunks2
 
 -- Returns (chunks, (state, jump)) where jump is -1 for no jump
-doRows :: ByteString -> STArray s -> ByteString -> ByteString
-    -> Integer -> Integer -> Integer -> Integer -> Integer -> Integer -> Integer
+doRows :: ModInfo -> STArray s -> ByteString -> ByteString
+    -> Integer -> Integer -> Integer
     -> [ByteString] -> ST s ([ByteString], ([Integer], Integer))
-doRows fd arr masks lv dataOff row numRows speed tempo numCh numSmp chunks =
+doRows mi arr masks lv dataOff row numRows chunks =
     if row >= numRows
     then do
         st2 <- stArrayToList arr
         return (chunks, (st2, 0 - 1))
     else do
-        rr <- decodeRow fd dataOff arr masks lv numCh numSmp
+        rr <- decodeRow mi dataOff arr masks lv
         let masks2  = fst rr
         let lv2     = fst (snd rr)
         let nextOff = fst (snd (snd rr))
         let jump    = snd (snd (snd rr))
-        let spt     = (outRate * 60) `div` (tempo * 24)
-        chunks2 <- doTicks fd arr speed spt numCh chunks
+        let spt     = (outRate * 60) `div` (mi.miTempo * 24)
+        chunks2 <- doTicks mi arr spt chunks
         if jump >= 0 || jump == (0 - 2)
         then do
             st2 <- stArrayToList arr
             return (chunks2, (st2, jump))
-        else doRows fd arr masks2 lv2 nextOff (row + 1) numRows speed tempo numCh numSmp chunks2
+        else doRows mi arr masks2 lv2 nextOff (row + 1) numRows chunks2
 
 -- Process one pattern: enter runST, decode all rows + mix
 -- Returns (chunks, (state, jump))
-processPattern :: ByteString -> [Integer] -> Integer -> Integer
-    -> Integer -> Integer -> Integer -> Integer
+processPattern :: ModInfo -> [Integer] -> Integer -> Integer
     -> ([ByteString], ([Integer], Integer))
-processPattern fd st pOff nRows speed tempo numCh numSmp =
+processPattern mi st pOff nRows =
     let masks = bsReplicate 64 0
         lv    = bsReplicate 256 0
     in runST (do
         arr <- newSTArrayFromList st
-        doRows fd arr masks lv (pOff + 8) 0 nRows speed tempo numCh numSmp [])
+        doRows mi arr masks lv (pOff + 8) 0 nRows [])
 
 -- ========== Playback Loop (LuaIO for output callback) ==========
 
@@ -414,30 +417,28 @@ findNextPos playedPositions maxPosition n
                         else Just n
     | otherwise       = Nothing
 
-handleEnd :: ByteString -> (ByteString -> LuaIO s ()) -> [Integer]
-    -> Integer -> Integer -> Integer
-    -> Integer -> Integer -> Bool -> [Integer] -> LuaIO s ()
-handleEnd fd sw st ordNum speed tempo numCh numSmp noLoop playedPositions =
+handleEnd :: ModInfo -> (ByteString -> LuaIO s ()) -> [Integer]
+    -> Bool -> [Integer] -> LuaIO s ()
+handleEnd mi sw st noLoop playedPositions =
     if noLoop
-    then case findNextPos playedPositions ordNum 0 of
+    then case findNextPos playedPositions mi.miOrdNum 0 of
         Nothing -> return ()
-        Just newPos -> doOrders fd sw st newPos ordNum speed tempo numCh numSmp noLoop (newPos:playedPositions)
+        Just newPos -> doOrders mi sw st newPos noLoop (newPos:playedPositions)
     else return ()
 
-doOrders :: ByteString -> (ByteString -> LuaIO s ()) -> [Integer]
-    -> Integer -> Integer -> Integer -> Integer
-    -> Integer -> Integer -> Bool -> [Integer] -> LuaIO s ()
-doOrders fd sw st idx ordNum speed tempo numCh numSmp noLoop playedPositions =
-    if idx >= ordNum
+doOrders :: ModInfo -> (ByteString -> LuaIO s ()) -> [Integer]
+    -> Integer -> Bool -> [Integer] -> LuaIO s ()
+doOrders mi sw st idx noLoop playedPositions =
+    if idx >= mi.miOrdNum
     then return ()
-    else let pat = getOrder fd idx
+    else let pat = getOrder mi.miFd idx
          in if pat == 254
-            then doOrders fd sw st (idx + 1) ordNum speed tempo numCh numSmp noLoop (idx:playedPositions)
+            then doOrders mi sw st (idx + 1) noLoop (idx:playedPositions)
             else if pat == 255
-            then handleEnd fd sw st ordNum speed tempo numCh numSmp noLoop playedPositions
-            else let pOff   = patOffset fd pat
-                     nRows  = patRows fd pOff
-                     result = processPattern fd st pOff nRows speed tempo numCh numSmp
+            then handleEnd mi sw st noLoop playedPositions
+            else let pOff   = patOffset mi.miFd pat
+                     nRows  = patRows mi.miFd pOff
+                     result = processPattern mi st pOff nRows
                      chunks = fst result
                      st2    = fst (snd result)
                      jump   = snd (snd result)
@@ -447,8 +448,8 @@ doOrders fd sw st idx ordNum speed tempo numCh numSmp noLoop playedPositions =
                      played2 = idx:playedPositions
                  in emitChunks sw (reverse chunks)
                         >> if jump >= 0 && noLoop && jump `elem` played2
-                           then handleEnd fd sw st2 ordNum speed tempo numCh numSmp noLoop played2
-                           else doOrders fd sw st2 nextIdx ordNum speed tempo numCh numSmp noLoop played2
+                           then handleEnd mi sw st2 noLoop played2
+                           else doOrders mi sw st2 nextIdx noLoop played2
 
 -- Find IMPM magic to skip UMX/container headers.
 -- Returns the offset of 'I' in 'IMPM', or 0 if the file starts with it.
@@ -466,7 +467,8 @@ play swallower fd noLoop =
         itData = if offset == 0 then fd else bsSub fd offset (bsLength fd - offset)
         numCh  = countActiveChans itData 0 0
         st     = initChans itData numCh 0
-    in doOrders itData swallower st 0 (hdrOrdNum itData) (hdrSpeed itData) (hdrTempo itData) numCh (hdrSmpNum itData) noLoop []
+        mi     = ModInfo itData (hdrOrdNum itData) (hdrSpeed itData) (hdrTempo itData) numCh (hdrSmpNum itData)
+    in doOrders mi swallower st 0 noLoop []
 
 main :: IO ()
 main = putStrLn "ImpulseTracker player written in mata-ll (https://matall.org)" >>
