@@ -1428,6 +1428,28 @@ impl Parser {
                     });
                 }
 
+                // (`name` expr) — backtick right section: \x -> x `name` expr
+                if self.at(&Token::Backtick) {
+                    self.advance();
+                    let name = self.expect_ident()?;
+                    self.expect(&Token::Backtick)?;
+                    if self.at(&Token::RightParen) {
+                        // (`name`) — operator as function
+                        self.advance();
+                        return Ok(Expr::OpFunc(name));
+                    }
+                    let rhs = self.parse_expr()?;
+                    self.expect(&Token::RightParen)?;
+                    return Ok(Expr::Lambda {
+                        params: vec!["_sec".into()],
+                        body: Box::new(Expr::InfixApp {
+                            op: name,
+                            lhs: Box::new(Expr::Var("_sec".into())),
+                            rhs: Box::new(rhs),
+                        }),
+                    });
+                }
+
                 // () — unit
                 if self.at(&Token::RightParen) {
                     self.advance();
@@ -1451,6 +1473,32 @@ impl Parser {
                                     params: vec!["_sec".into()],
                                     body: Box::new(Expr::InfixApp {
                                         op,
+                                        lhs: Box::new(lhs),
+                                        rhs: Box::new(Expr::Var("_sec".into())),
+                                    }),
+                                });
+                            }
+                        }
+                    }
+                }
+
+                // (expr `name`) — backtick left section: \x -> expr `name` x
+                if self.at(&Token::Backtick) {
+                    let after_bt = self.pos + 1;
+                    if after_bt + 1 < self.tokens.len() {
+                        if let Token::Ident(_) = &self.tokens[after_bt].token {
+                            if self.tokens[after_bt + 1].token == Token::Backtick
+                                && after_bt + 2 < self.tokens.len()
+                                && self.tokens[after_bt + 2].token == Token::RightParen
+                            {
+                                self.advance(); // consume first backtick
+                                let name = self.expect_ident()?;
+                                self.advance(); // consume second backtick
+                                self.advance(); // consume )
+                                return Ok(Expr::Lambda {
+                                    params: vec!["_sec".into()],
+                                    body: Box::new(Expr::InfixApp {
+                                        op: name,
                                         lhs: Box::new(lhs),
                                         rhs: Box::new(Expr::Var("_sec".into())),
                                     }),
