@@ -128,6 +128,29 @@ main = putStrLn "ok"
     }
 }
 
+// Runtime error tests: these should compile but fail at runtime
+#[test]
+fn undefined_errors_when_forced() {
+    let source = r#"
+main :: IO ()
+main = do
+    let x = undefined
+    print x
+"#;
+    let lua_code = mllc::compile(source, Path::new("."), &[])
+        .expect("undefined should compile")
+        .lua_code;
+    let lua = mlua::Lua::new();
+    match lua.load(&lua_code).set_name("undefined_forced").exec() {
+        Err(e) => {
+            let msg = format!("{}", e);
+            assert!(msg.contains("Prelude.undefined"),
+                "Expected 'Prelude.undefined' error, got: {}", msg);
+        }
+        Ok(()) => panic!("Expected runtime error when forcing undefined"),
+    }
+}
+
 // Examples that should compile successfully
 #[test]
 fn examples_compile() {
