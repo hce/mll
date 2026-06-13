@@ -93,7 +93,7 @@ impl CodeGen {
         for name in &[
             "__force", "__thunk", "__mll_cons", "__mll_lazy_cons", "__mll_head",
             "__mll_tail", "__mll_to_lua", "__mll_wrap_callback", "__mll_run",
-            "not_", "engage", "liftIO", "show", "error_", "max", "min",
+            "not_", "engage", "liftIO", "show", "error_", "max", "min", "undefined",
             "pure", "return_", "Just",
             "show_Integer", "show_Number", "show_String", "show_Bool",
             "show_List_", "show_Maybe", "show_ByteString", "show_HashMap",
@@ -135,7 +135,7 @@ impl CodeGen {
             "stArrayToList",
             "hmEmpty", "hmInsert", "hmLookup", "hmDelete", "hmSize",
             "hmKeys", "hmValues", "hmMember", "hmFromList",
-            "return", "pure", "not", "print", "error", "show",
+            "return", "pure", "not", "print", "error", "show", "undefined",
         ] {
             self.top_level_names.insert(sanitize_name(name));
         }
@@ -1952,6 +1952,7 @@ local function show(x)
         else return "(" .. table.concat(parts, ", ") .. ")" end
     else return tostring(x) end
 end
+local undefined = __thunk(function() error("Prelude.undefined", 0) end)
 local function error_(msg) error(__force(msg)) end
 local function max(a, b) return math.max(__force(a), __force(b)) end
 local function min(a, b) return math.min(__force(a), __force(b)) end
