@@ -85,7 +85,6 @@ MATA-LL TODO
 - [x] Full strictness analysis (demand-driven call-site decisions, is_cheap_arg retained for trivial expressions)
 - [ ] Zero-arg LuaIterator (stdinLines) needs IO wrapping to avoid eager eval
 - [x] Monad typeclass dispatch for >>= and >> (instances for IO, LuaIO, ST; proper error on missing instance)
-- [ ] GitHub Pages deployment for playground (currently wasm artifact only)
 
 ## Parser
 
