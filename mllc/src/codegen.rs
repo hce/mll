@@ -1086,6 +1086,12 @@ impl CodeGen {
                     self.emit(")");
                 }
             }
+            // ST primitive calls: perform directly (no closure needed).
+            // Safe since gen_action is only called for immediately-consumed
+            // actions (>>= / >>), not let-bound actions (gen_expr → closure).
+            TExprKind::App(_, _) if Self::is_st_primitive_call(expr) => {
+                self.gen_expr(expr);
+            }
             _ => {
                 // General IO/ST action: use __mll_run which handles both
                 // direct values and action closures (function or value).
@@ -1102,6 +1108,13 @@ impl CodeGen {
             | "modifySTArray" | "stArrayLength" | "newSTArrayFromList"
             | "stArrayToList"
         )
+    }
+
+    /// Check if an expression is a fully-applied call to an ST primitive.
+    fn is_st_primitive_call(expr: &TExpr) -> bool {
+        let mut f = expr;
+        while let TExprKind::App(func, _) = &f.kind { f = func; }
+        matches!(&f.kind, TExprKind::Var(name) if Self::is_st_primitive(name))
     }
 
     fn is_nullary_action_type(ty: &Ty) -> bool {
