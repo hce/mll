@@ -117,7 +117,6 @@ MATA-LL TODO
 ## Can defer
 
 - [ ] Lambda pattern matching
-- [ ] FFI varargs support for Lua functions like string.format
 
 ## String types (design decision)
 
