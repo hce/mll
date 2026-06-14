@@ -118,6 +118,10 @@ MATA-LL TODO
 
 - [ ] Typechecker stack overflow on CPS-heavy types (Regex library with many test functions overflows 256MB stack; needs iterative type inference)
 
+## Testing
+
+- [ ] Comprehensive test suites for each library module (Regex, JSON, LOS, LString, LBit, LMath) — the Regex test already revealed the CPS stack overflow; other modules likely have undiscovered edge cases
+
 ## Can defer
 
 - [x] Lambda pattern matching
