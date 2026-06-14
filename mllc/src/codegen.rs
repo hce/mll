@@ -85,6 +85,18 @@ impl CodeGen {
         }
     }
 
+    /// Create a sub-CodeGen that shares lookup tables but has its own output buffer.
+    fn new_sub(&self) -> CodeGen {
+        let mut sub = CodeGen::new();
+        sub.constructors = self.constructors.clone();
+        sub.newtypes = self.newtypes.clone();
+        sub.fn_table = self.fn_table.clone();
+        sub.concrete_vars = self.concrete_vars.clone();
+        sub.record_accessors = self.record_accessors.clone();
+        sub.top_level_names = self.top_level_names.clone();
+        sub
+    }
+
     fn emit(&mut self, s: &str) { self.output.push_str(s); }
     fn emit_indent(&mut self) { for _ in 0..self.indent { self.output.push_str("    "); } }
     fn emit_line(&mut self, s: &str) { self.emit_indent(); self.output.push_str(s); self.output.push('\n'); }
@@ -602,9 +614,7 @@ impl CodeGen {
                     for (gi, guard) in clause.guards.iter().enumerate() {
                         let gkw = if gi == 0 { "if" } else { "elseif" };
                         self.emit_indent(); self.emit(&format!("{} ", gkw));
-                        let mut sub = CodeGen::new();
-                        sub.constructors = self.constructors.clone();
-                        sub.newtypes = self.newtypes.clone();
+                        let mut sub = self.new_sub();
                         sub.gen_expr(&guard.condition);
                         self.emit(&sub.output);
                         self.emit(" then\n");
@@ -623,9 +633,7 @@ impl CodeGen {
                     for (gi, guard) in clause.guards.iter().enumerate() {
                         let gkw = if i == 0 && gi == 0 { "if" } else { "elseif" };
                         self.emit_indent(); self.emit(&format!("{} ", gkw));
-                        let mut sub = CodeGen::new();
-                        sub.constructors = self.constructors.clone();
-                        sub.newtypes = self.newtypes.clone();
+                        let mut sub = self.new_sub();
                         sub.gen_expr(&guard.condition);
                         self.emit(&sub.output);
                         self.emit(" then\n");
@@ -1643,14 +1651,14 @@ impl CodeGen {
                     self.emit(" }");
                 } else if let Some(elem_eq) = specialized.strip_prefix("__mll_list_eq:") {
                     // List eq: recursive element-wise comparison
-                    self.emit(&format!("__mll_list_eq({}, ", elem_eq));
+                    self.emit(&format!("__mll_list_eq({}, ", self.lua_ref(elem_eq)));
                     self.gen_expr(&args[0]);
                     self.emit(", ");
                     self.gen_expr(&args[1]);
                     self.emit(")");
                 } else if let Some(elem_eq) = specialized.strip_prefix("__mll_maybe_eq:") {
                     // Maybe eq: Nothing==Nothing, Just a == Just b iff a==b
-                    self.emit(&format!("__mll_maybe_eq({}, ", elem_eq));
+                    self.emit(&format!("__mll_maybe_eq({}, ", self.lua_ref(elem_eq)));
                     self.gen_expr(&args[0]);
                     self.emit(", ");
                     self.gen_expr(&args[1]);
@@ -1664,7 +1672,7 @@ impl CodeGen {
                     self.emit("(");
                     for i in 0..n {
                         if i > 0 { self.emit(" and "); }
-                        self.emit(eq_fns[i]);
+                        self.emit(&self.lua_ref(eq_fns[i]));
                         self.emit("(__force(");
                         self.gen_expr(&args[0]);
                         self.emit(&format!(")[{}], __force(", i + 1));
@@ -1674,7 +1682,7 @@ impl CodeGen {
                     self.emit(")");
                 } else if let Some(elem_show) = specialized.strip_prefix("__mll_show_list:") {
                     // Specialized list show: iterate with element show function
-                    self.emit(&format!("__mll_show_list({}, ", elem_show));
+                    self.emit(&format!("__mll_show_list({}, ", self.lua_ref(elem_show)));
                     self.gen_expr(&args[0]);
                     self.emit(")");
                 } else if let Some(lua_name) = specialized.strip_prefix("__mll_const:") {
