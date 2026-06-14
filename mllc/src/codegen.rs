@@ -234,7 +234,7 @@ impl CodeGen {
             self.emit_line("-- Entry point (skip when loaded via require)");
             self.emit_line("local __mll_modname = ...");
             let run_ref = self.lua_ref("__run");
-            self.emit_line(&format!("if __mll_modname == nil then {}() end", run_ref));
+            self.emit_line(&format!("if __mll_modname == nil then __mll_run({}()) end", run_ref));
         }
 
         // Generate module return table for exports
@@ -1551,7 +1551,8 @@ impl CodeGen {
                     self.gen_expr(rhs); self.emit(")");
                 } else {
                     // User-defined or non-Lua operator: emit as function call
-                    self.emit(&sanitize_name(op)); self.emit("(");
+                    let sop = sanitize_name(op);
+                    self.emit(&self.lua_ref(&sop)); self.emit("(");
                     self.gen_expr(lhs); self.emit(", "); self.gen_expr(rhs); self.emit(")");
                 }
             }
@@ -1635,7 +1636,8 @@ impl CodeGen {
                         if kv.len() == 2 {
                             if !first { self.emit(", "); }
                             first = false;
-                            self.emit(&format!("{} = {}", sanitize_name(kv[0]), sanitize_name(kv[1])));
+                            let sv = sanitize_name(kv[1]);
+                            self.emit(&format!("{} = {}", sanitize_name(kv[0]), self.lua_ref(&sv)));
                         }
                     }
                     self.emit(" }");
@@ -1831,7 +1833,8 @@ impl CodeGen {
                 self.emit(&format!("{}.{}", dict_param, sanitize_name(method_name)));
             }
             TExprKind::DictCall { func_name, dict_args, value_args } => {
-                self.emit(&sanitize_name(func_name));
+                let sfn = sanitize_name(func_name);
+                self.emit(&self.lua_ref(&sfn));
                 self.emit("(");
                 let mut first = true;
                 for d in dict_args {

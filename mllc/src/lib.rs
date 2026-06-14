@@ -83,11 +83,13 @@ pub fn compile(source: &str, source_dir: &Path, lib_paths: &[&Path]) -> Result<C
 
     // Merge prelude declarations (prepend before user declarations)
     let prelude_decls = parse_prelude()?;
+    let hidden = module.hidden.clone();
     let mut module = ast::Module {
         decls: prelude_decls.into_iter()
             .chain(module.decls.into_iter())
             .collect(),
         exports: None,
+        hidden,
     };
     let local_start = module.decls.len() - own_count;
 

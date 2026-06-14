@@ -82,6 +82,7 @@ impl ModuleLoader {
         let mut imported_decls: Vec<Decl> = Vec::new();
         let mut own_decls: Vec<Decl> = Vec::new();
         let mut seen_imports: HashSet<String> = HashSet::new();
+        let mut hidden_names: HashSet<String> = module.hidden.clone();
 
         for decl in &module.decls {
             match decl {
@@ -96,17 +97,27 @@ impl ModuleLoader {
                     // Recursively resolve imports in the imported module
                     let resolved = self.resolve_imports(&imported)?;
 
-                    // All non-import declarations are included for compilation
+                    // Include ALL non-import declarations for compilation
                     // (exported functions may depend on internal helpers).
-                    // TODO: enforce export visibility in the type environment
-                    // so importers can't directly reference unexported names.
-                    let exported: Vec<&Decl> = resolved.decls.iter()
+                    // Track hidden names for typechecker enforcement.
+                    let all_decls: Vec<&Decl> = resolved.decls.iter()
                         .filter(|d| !matches!(d, Decl::Import { .. }))
                         .collect();
 
+                    // Compute hidden names: names in the module but not exported
+                    if let Some(ref exports) = imported.exports {
+                        for d in &all_decls {
+                            if let Some(name) = decl_name(d) {
+                                if !exports.contains(&name) {
+                                    hidden_names.insert(name);
+                                }
+                            }
+                        }
+                    }
+
                     match items {
                         ImportItems::All => {
-                            for d in &exported {
+                            for d in &all_decls {
                                 imported_decls.push((*d).clone());
                             }
                         }
@@ -119,7 +130,7 @@ impl ModuleLoader {
                                 }
                             }).collect();
 
-                            for d in &exported {
+                            for d in &all_decls {
                                 let name = decl_name(d);
                                 if let Some(n) = name {
                                     if wanted.contains(&n) {
@@ -129,7 +140,7 @@ impl ModuleLoader {
                             }
                         }
                         ImportItems::Qualified(alias) => {
-                            for d in &exported {
+                            for d in &all_decls {
                                 imported_decls.push(prefix_decl(d, alias));
                             }
                         }
@@ -143,7 +154,7 @@ impl ModuleLoader {
 
         // Merge: imported first, then own
         imported_decls.extend(own_decls);
-        Ok(Module { decls: imported_decls, exports: None })
+        Ok(Module { decls: imported_decls, exports: None, hidden: hidden_names })
     }
 }
 

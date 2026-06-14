@@ -95,6 +95,12 @@ pub struct Checker {
     type_aliases: HashMap<String, (Vec<String>, Type)>,
     /// Kind table: type constructor name -> kind
     kinds: HashMap<String, Kind>,
+    /// Names hidden by module export control (imported but not exported).
+    /// Only enforced when `enforce_hidden` is true (local code, not imported code).
+    hidden_names: HashSet<String>,
+    enforce_hidden: bool,
+    /// Index where local declarations start (for hidden name enforcement)
+    local_decl_start: usize,
     /// Classes defined in the local module (for orphan detection)
     local_classes: HashSet<String>,
     /// Types defined in the local module (for orphan detection)
@@ -119,6 +125,9 @@ impl Checker {
             type_families: HashMap::new(),
             type_aliases: HashMap::new(),
             kinds: HashMap::new(),
+            hidden_names: HashSet::new(),
+            enforce_hidden: false,
+            local_decl_start: 0,
             local_classes: HashSet::new(),
             local_types: HashSet::new(),
             orphan_check_enabled: false,
@@ -1008,10 +1017,14 @@ impl Checker {
         self.local_classes = local_classes;
         self.local_types = local_types;
         self.orphan_check_enabled = true;
+        self.local_decl_start = local_start;
         self.check_module(module)
     }
 
     pub fn check_module(&mut self, module: &Module) -> TModule {
+        // Register hidden names from import export control
+        self.hidden_names.extend(module.hidden.iter().cloned());
+
         // Pass 1: register data types and newtypes
         for decl in &module.decls {
             match decl {
@@ -1123,7 +1136,11 @@ impl Checker {
 
         // Pass 6: collect exports and check function definitions
         let mut exports = Vec::new();
-        for decl in &module.decls {
+        for (decl_idx, decl) in module.decls.iter().enumerate() {
+            // Enable hidden name enforcement only for local (user) declarations
+            self.enforce_hidden = !self.hidden_names.is_empty()
+                && self.local_decl_start > 0
+                && decl_idx >= self.local_decl_start;
             match decl {
                 Decl::DataDef { name, type_vars, constructors, .. } => {
                     data_defs.push(self.convert_data_def(name, type_vars, constructors));
@@ -2053,6 +2070,10 @@ impl Checker {
     fn infer_expr(&mut self, expr: &Expr, env: &TypeEnv) -> Result<(TExpr, Ty, Subst), TypeErrorKind> {
         match expr {
             Expr::Var(name) => {
+                if self.enforce_hidden && self.hidden_names.contains(name) {
+                    return Err(TypeErrorKind::Other(
+                        format!("'{}' is not exported by its module", name)));
+                }
                 if let Some(scheme) = env.lookup(name) {
                     let ty = self.instantiate(scheme);
                     Ok((TExpr::new(TExprKind::Var(name.clone()), ty.clone()), ty, Subst::empty()))

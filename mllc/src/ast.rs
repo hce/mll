@@ -23,6 +23,9 @@ pub struct Module {
     pub decls: Vec<Decl>,
     /// Module export list. None = export everything, Some = only these names.
     pub exports: Option<Vec<String>>,
+    /// Names imported but hidden (from modules with export lists).
+    /// The typechecker rejects direct references to these.
+    pub hidden: std::collections::HashSet<String>,
 }
 
 /// Top-level declarations.

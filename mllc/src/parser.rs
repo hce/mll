@@ -164,7 +164,7 @@ impl Parser {
             merged.push(decl);
         }
 
-        Ok(Module { decls: merged, exports: module_exports })
+        Ok(Module { decls: merged, exports: module_exports, hidden: std::collections::HashSet::new() })
     }
 
     fn parse_decl(&mut self) -> Result<Vec<Decl>, String> {
