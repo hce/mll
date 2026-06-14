@@ -114,6 +114,10 @@ MATA-LL TODO
 - [x] Module export control (export list parsed and enforced in typechecker)
 - [x] where blocks at module level
 
+## Known limitations
+
+- [ ] Typechecker stack overflow on CPS-heavy types (Regex library with many test functions overflows 256MB stack; needs iterative type inference)
+
 ## Can defer
 
 - [x] Lambda pattern matching
