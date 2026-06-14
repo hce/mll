@@ -1623,7 +1623,8 @@ impl Parser {
 
                 loop {
                     self.skip_newlines_and_indent();
-                    if self.at_eof() || self.current_indent < case_indent {
+                    if self.at_eof() || self.current_indent < case_indent
+                        || self.at(&Token::Where) {
                         break;
                     }
                     let pattern = self.parse_pattern()?;

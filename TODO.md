@@ -112,7 +112,7 @@ MATA-LL TODO
 - [x] Local function definitions in do-let (`let f x = ...`)
 - [x] Inline case syntax (`case x of { A -> ...; B -> ... }`)
 - [x] Module export control (export list parsed and enforced in typechecker)
-- [ ] where blocks at module level (partially supported)
+- [x] where blocks at module level
 
 ## Can defer
 
