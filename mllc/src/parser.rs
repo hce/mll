@@ -1810,6 +1810,43 @@ impl Parser {
             }
             Token::Backslash => {
                 self.advance();
+                // Check for pattern-matching lambda: \(Con x) -> body
+                // Desugars to \__arg -> case __arg of { pattern -> body }
+                if matches!(self.peek(), Token::LeftParen | Token::UpperIdent(_) | Token::LeftBracket) {
+                    let save = self.pos;
+                    let save_indent = self.current_indent;
+                    // Try parsing as pattern
+                    if let Ok(pat) = self.parse_pattern() {
+                        if self.at(&Token::Arrow) {
+                            self.advance();
+                            let body = self.parse_expr()?;
+                            let mut branches = vec![CaseBranch {
+                                pattern: pat,
+                                guards: vec![],
+                                body,
+                            }];
+                            // Add wildcard fallback for partial patterns
+                            branches.push(CaseBranch {
+                                pattern: Pattern::Wildcard,
+                                guards: vec![],
+                                body: Expr::App(
+                                    Box::new(Expr::Var("error".into())),
+                                    Box::new(Expr::Lit(Literal::Str("non-exhaustive lambda pattern".into()))),
+                                ),
+                            });
+                            return Ok(Expr::Lambda {
+                                params: vec!["__lam".to_string()],
+                                body: Box::new(Expr::Case {
+                                    scrutinee: Box::new(Expr::Var("__lam".to_string())),
+                                    branches,
+                                }),
+                            });
+                        }
+                    }
+                    // Not a pattern lambda — backtrack
+                    self.pos = save;
+                    self.current_indent = save_indent;
+                }
                 let mut params = Vec::new();
                 while let Token::Ident(name) = self.peek().clone() {
                     params.push(name);

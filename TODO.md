@@ -116,7 +116,7 @@ MATA-LL TODO
 
 ## Can defer
 
-- [ ] Lambda pattern matching
+- [x] Lambda pattern matching
 
 ## String types (design decision)
 
