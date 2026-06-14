@@ -26,6 +26,10 @@ struct CodeGen {
     /// Record field accessors: maps accessor name to 1-based field index.
     /// Used to inline field access as direct table indexing.
     record_accessors: std::collections::HashMap<String, usize>,
+    /// Function table: maps sanitized function names to __mll_fn[N] slots.
+    /// Used to pack all forward-declared functions into a single table,
+    /// avoiding Lua's 200-local-variable limit.
+    fn_table: std::collections::HashMap<String, usize>,
     /// Demand analysis: per-function parameter strictness.
     demand_info: DemandInfo,
     output: String,
@@ -42,6 +46,7 @@ impl CodeGen {
             inline_fns: std::collections::HashMap::new(),
             top_level_names: std::collections::HashSet::new(),
             record_accessors: std::collections::HashMap::new(),
+            fn_table: std::collections::HashMap::new(),
             demand_info: DemandInfo { strict_params: std::collections::HashMap::new() },
             output: String::new(), indent: 0,
         }
@@ -53,9 +58,19 @@ impl CodeGen {
 
     /// Returns "local function name" or "name = function" depending on
     /// whether the name was forward-declared.
+    /// Resolve a sanitized name to its Lua reference.
+    /// Forward-declared names use __mll_fn[N], others use the name directly.
+    fn lua_ref(&self, lua_name: &str) -> String {
+        if let Some(&slot) = self.fn_table.get(lua_name) {
+            format!("__mll_fn[{}]", slot)
+        } else {
+            lua_name.to_string()
+        }
+    }
+
     fn fn_decl(&self, lua_name: &str, params: &str) -> String {
-        if self.forward_declared.contains(lua_name) {
-            format!("{} = function({})", lua_name, params)
+        if let Some(&slot) = self.fn_table.get(lua_name) {
+            format!("__mll_fn[{}] = function({})", slot, params)
         } else {
             format!("local function {}({})", lua_name, params)
         }
@@ -63,8 +78,8 @@ impl CodeGen {
 
     /// Returns "local name = " or "name = " depending on forward declaration.
     fn var_decl(&self, lua_name: &str) -> String {
-        if self.forward_declared.contains(lua_name) {
-            format!("{} = ", lua_name)
+        if let Some(&slot) = self.fn_table.get(lua_name) {
+            format!("__mll_fn[{}] = ", slot)
         } else {
             format!("local {} = ", lua_name)
         }
@@ -177,18 +192,18 @@ impl CodeGen {
             self.record_accessors.insert(sanitize_name(name), *idx);
         }
 
-        // Forward-declare all functions (user + specializations) to support
-        // mutual recursion and specialization ordering
+        // Forward-declare all functions in a table to avoid Lua's
+        // 200-local-variable limit. Each function gets __mll_fn[N].
         let all_fn_names: Vec<String> = module.functions.iter()
             .map(|f| sanitize_name(&f.name))
             .filter(|n| !n.starts_with("__mll_"))  // preamble builtins are already local
             .collect();
-        if all_fn_names.len() > 1 {
-            self.emit_line(&format!("local {}", all_fn_names.join(", ")));
-            for name in &all_fn_names {
+        if !all_fn_names.is_empty() {
+            self.emit_line("local __mll_fn = {}");
+            for (i, name) in all_fn_names.iter().enumerate() {
+                let slot = i + 1; // 1-based Lua indexing
+                self.fn_table.insert(name.clone(), slot);
                 self.forward_declared.insert(name.clone());
-                // Forward-declared names will all be assigned functions —
-                // mark concrete so references in any function body skip __force
                 self.concrete_vars.insert(name.clone());
                 self.top_level_names.insert(name.clone());
             }
@@ -218,7 +233,8 @@ impl CodeGen {
             self.emit_line("");
             self.emit_line("-- Entry point (skip when loaded via require)");
             self.emit_line("local __mll_modname = ...");
-            self.emit_line("if __mll_modname == nil then __run() end");
+            let run_ref = self.lua_ref("__run");
+            self.emit_line(&format!("if __mll_modname == nil then {}() end", run_ref));
         }
 
         // Generate module return table for exports
@@ -239,7 +255,8 @@ impl CodeGen {
                 self.emit_indent();
                 self.emit("for i = 1, args.n do if type(args[i]) == \"function\" then args[i] = __mll_wrap_callback(args[i]) end end\n");
                 self.emit_indent();
-                self.emit(&format!("local __result = {sname}(__unpack(args, 1, args.n))\n"));
+                let fn_ref = self.lua_ref(&sname);
+                self.emit(&format!("local __result = {}(__unpack(args, 1, args.n))\n", fn_ref));
                 self.emit_indent();
                 self.emit("if type(__result) == \"function\" then __result = __result() end\n");
                 self.emit_indent();
@@ -1259,11 +1276,12 @@ impl CodeGen {
                 "otherwise" => self.emit("true"),
                 _ => {
                     let sname = sanitize_name(name);
+                    let lref = self.lua_ref(&sname);
                     if self.concrete_vars.contains(&sname) {
-                        self.emit(&sname);
+                        self.emit(&lref);
                     } else {
                         self.emit("__force(");
-                        self.emit(&sname);
+                        self.emit(&lref);
                         self.emit(")");
                     }
                 }
@@ -1280,11 +1298,12 @@ impl CodeGen {
                     "otherwise" => self.emit("true"),
                     _ => {
                         let sname = sanitize_name(name);
+                        let lref = self.lua_ref(&sname);
                         if self.concrete_vars.contains(&sname) {
-                            self.emit(&sname);
+                            self.emit(&lref);
                         } else {
                             self.emit("__force(");
-                            self.emit(&sname);
+                            self.emit(&lref);
                             self.emit(")");
                         }
                     }
