@@ -51,6 +51,14 @@ MATA-LL TODO
 - [x] Type substitution in monomorphized specializations
 - [x] undefined (bottom) value — thunk that errors when forced
 - [x] WASM build target (mllc-wasm crate, browser playground)
+- [x] Type aliases (`type Pair a = (a, a)`, `Int` as alias for Integer)
+- [x] `module Name (exports) where` header parsing
+- [x] `putStr` (io.write FFI)
+- [x] Skip main when loaded via require
+- [x] Multi-line record syntax in data declarations
+- [x] Lua compat CI (5.1, 5.4, LuaJIT) and performance benchmark
+- [x] Lua 5.1 compat: graceful bitwise library fallback
+- [x] IO action semantics test suite
 
 ## Typeclasses and dispatch
 
@@ -78,6 +86,10 @@ MATA-LL TODO
 - [x] Demand analysis for parameter strictness (per-function, branch-aware)
 - [x] return/pure optimization: thunk only when argument contains unknown function calls
 - [x] CI wasm build job with artifact upload
+- [x] Record field accessors inlined as direct table indexing
+- [x] Forward-declared functions packed into __mll_fn table (eliminates 200-local limit)
+- [x] IO actions as proper closures (IO can't leak into pure code)
+- [x] ST primitive inlining in gen_action (zero-overhead in bind chains)
 
 ## Open
 
